@@ -12,18 +12,17 @@ original idea came from.
 
 Better control over the PSP display brightness! 
 
-This allows you to utilise the full brightness range (0-100),
-which is otherwise unavailable with a stock PSP.
+This allows you to utilise the full brightness range (0-100), which is otherwise unavailable with a stock PSP.
+
+## How to use
 
 Press the PSP's **Display (brightness) button** to cycle through the brightness
 values you list in `BetterBright.ini`. 
 
-By default you can also hold hold a trigger + tap Display Button: **R = brighter, L = dimmer** 
+(By default) You can also hold hold a trigger + tap Display Button: **R = brighter, L = dimmer** 
 
 It also remembers the level you chose and re-applies it after returning to the XMB, launching a game, 
-or rebooting - instead of snapping back to the firmware default. 
-
-(Resuming from sleep is the exception - see Known issues.)
+or rebooting - instead of snapping back to the firmware default. (Resuming from sleep is the exception - see Known issues.)
 
 **Use at your own risk!** 
 
