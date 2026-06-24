@@ -26,17 +26,17 @@ values you list in `BetterBright.ini`.
 It also remembers the level you chose and re-applies it after returning to the XMB, launching a game, 
 or rebooting - instead of snapping back to the firmware default. (Resuming from sleep is the exception - see Known issues.)
 
-## Use at your own risk!
+## Install (ARK-4 / FasterARK)
 
-Whilst the original display is designed to go to its max brightness, the PSP restricts 
-this to preserve battery life and "potentially" long-term damage.  
+Put `BetterBright.prx` and `BetterBright.ini` together in your plugins folder and
+enable BetterBright in the ARK Custom Launcher. 
 
-**100% brightness will drain the battery faster!**
+https://github.com/PSP-Archive/ARK-4/wiki/Plugins
 
-In an age of quality 1800/2500mAh batteries, and nobody using UMD any more, battery drain isn't
-so much of a concern as was 10+ years ago. 
+(The included `vsh.txt` / `game.txt` / `pops.txt` in the `legacy` are only for loaders that still use
+seplugins-style text files. Do your self a favour, and just use ARK-4 or FasterARK. 
 
-## Config (`BetterBright.ini`)
+## Configuration (`BetterBright.ini`)
 
 - One brightness value per line, `0`-`100`. `0=backlight off`, `100=full`, this may vary depending on your PSP model and display.
 - Lines starting with `#` are comments.
@@ -73,20 +73,20 @@ Both schemes stop at the dimmest/brightest end of your list (no wrap-around).
 - `BetterBright.dat` - File the plugin generates to remember your level. 
                        Delete it to reset to "nothing remembered".
 
-## Install (ARK-4 / FasterARK)
-
-Put `BetterBright.prx` and `BetterBright.ini` together in your plugins folder and
-enable BetterBright in the ARK Custom Launcher. 
-
-https://github.com/PSP-Archive/ARK-4/wiki/Plugins
-
-(The included `vsh.txt` / `game.txt` / `pops.txt` in the `legacy` are only for loaders that still use
-seplugins-style text files. Do your self a favour, and just use ARK-4 or FasterARK. 
-
 ## Build
 
 See `BUILD.md`. You need the ARK-4 source for one header and one stub library;
 everything else is the base PSP SDK.
+
+## Use at your own risk!
+
+Whilst the original display is designed to go to its max brightness, the PSP restricts 
+this to preserve battery life and "potentially" long-term damage.  
+
+**100% brightness will drain the battery faster!**
+
+In an age of quality 1800/2500mAh batteries, and nobody using UMD any more, battery drain isn't
+so much of a concern as was 10+ years ago. 
 
 ## Known issues
 
@@ -109,5 +109,3 @@ everything else is the base PSP SDK.
 - **hobbo91** - BetterBright.
 - **hiroi01** - bright3 (the plugin this is loosely based on).
 - **plum** - the original bright.
-
-Use at your own risk.
