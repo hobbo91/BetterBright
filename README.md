@@ -25,6 +25,7 @@ the XMB, launching a game, or rebooting - instead of snapping back to the
 firmware default. (Resuming from sleep is the exception - see Known issues.)
 
 **Use at your own risk!** 
+
 Whilst the display is designed to go to its max brightness, the PSP restricts this
 to preserve battery life and "potentially" long-term damage.  
 
