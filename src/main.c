@@ -1,9 +1,9 @@
 /*
  * BetterBright  -  brightness control plugin for PSP (CFW: ARK-4 / FasterARK)
  *
- *   v0.1   -   developed by hobbo91  (https://github.com/hobbo91)
+ *   v0.4   -   developed by hobbo91  (https://github.com/hobbo91)
  *
- * Loosely based on the older "bright3" brightness plugin by hiroi01 (itself a
+ * Based on the older "bright3" brightness plugin by hiroi01 (itself a
  * mod of "bright" by plum): https://hiroi01.com/?p=prx#bright3 - the original
  * screen-patching idea comes from there. BetterBright is otherwise a rework:
  * persistence, sleep/idle handling, two input schemes, and a modern toolchain.
