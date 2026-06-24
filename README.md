@@ -12,7 +12,7 @@ original screen-patching idea came from.
 
 ## What it does
 
-Allows finer control over the PSP display brightness, this allows you to utilise
+Better control over the PSP display brightness, this allows you to utilise
 the full brightness range (0-100) which is otherwise unavailable the stock PSP firmware.
 
 Press the PSP's **Display (brightness) button** to cycle through the brightness
@@ -23,6 +23,14 @@ By default you can hold hold a trigger + tap Display: **R = brighter, L = dimmer
 It also **remembers** the level you chose and re-applies it after returning to
 the XMB, launching a game, or rebooting - instead of snapping back to the
 firmware default. (Resuming from sleep is the exception - see Known issues.)
+
+**Use at your own risk!** 
+Whilst the display is designed to go to its max brightness, the PSP restricts this
+to preserve battery life and "potentially" long-term damage.  
+
+In an age of 1800/2500mAh batteries and nobody using UMD any more, battery drain isn't
+so much of a concern as was in 2004 - 2014. 
+
 
 ## Config (`BetterBright.ini`)
 
@@ -42,9 +50,10 @@ cycles regardless):
 
 Both schemes stop at the dimmest/brightest end of your list (no wrap-around).
 
-**`hold_brightness`** - keep the screen at your level on idle. `1` = on
-(default), `0` = off.
+**`hold_brightness`** - keep the screen always on until the console sleeps. `1` = on
+, `0` = off (default).
 
+> Intention was to still allow the display to turn off (only prevent dimming)
 > The PSP's idle **dim** can't be cancelled by itself - it isn't visible to the
 > brightness API, so it can't be detected and undone. The only way to stop it is
 > to hold off the display idle timer, and because the dim and the backlight
@@ -55,9 +64,9 @@ Both schemes stop at the dimmest/brightest end of your list (no wrap-around).
 
 ## Files
 
-- `BetterBright.prx` - the plugin (build it - see `BUILD.md`).
+- `BetterBright.prx` - the plugin
 - `BetterBright.ini` - your settings (keep it next to the .prx).
-- `BetterBright.dat` - File the plugin writes to remember your level. 
+- `BetterBright.dat` - File the plugin generates to remember your level. 
                        Delete it to reset to "nothing remembered".
 
 ## Install (ARK-4 / FasterARK)
