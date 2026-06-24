@@ -1,6 +1,6 @@
 # BetterBright
 
-A brightness control plugin for the PSP, for ARK-4 / FasterARK custom firmware.
+Brightness control plugin for the PSP, for ARK-4 / FasterARK custom firmware.
 
 Based on the older *bright3* brightness plugin by hiroi01 (itself a mod
 of *bright* by plum) - https://hiroi01.com/?p=prx#bright3 - which is where the
