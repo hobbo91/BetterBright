@@ -1,0 +1,21 @@
+# macOS metadata
+.DS_Store
+__MACOSX/
+._*
+
+# PSP build outputs / intermediates
+*.o
+*.elf
+*.prx
+*.SFO
+*.PBP
+*.map
+
+# Generated release archives
+releases/**/*.zip
+
+# Local editor files
+*.swp
+*.swo
+.vscode/
+.idea/
