@@ -6,14 +6,19 @@ A brightness control plugin for the PSP, for ARK-4 / FasterARK custom firmware.
 
 Based on the older *bright3* brightness plugin by hiroi01 (itself a mod
 of *bright* by plum) - https://hiroi01.com/?p=prx#bright3 - which is where the
-original screen-patching idea came from.
+original screen-patching idea came from. 
 
 ---
 
 ## What it does
 
+Allows better control over the PSP display brightness, this allows you to utilise
+the full brightness range which is otherwise unavailable the stock PSP firmware.
+
 Press the PSP's **Display (brightness) button** to cycle through the brightness
-values you list in `BetterBright.ini`.
+values you list in `BetterBright.ini`. 
+
+By default you can also hold hold a trigger + tap Display: **R = brighter, L = dimmer** 
 
 It also **remembers** the level you chose and re-applies it after returning to
 the XMB, launching a game, or rebooting - instead of snapping back to the
