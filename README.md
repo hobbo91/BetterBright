@@ -14,8 +14,6 @@ Better control over the PSP display brightness!
 
 Utilise the full brightness range (0-100), which is otherwise unavailable on a stock PSP. Some models (such as PSP-3000) also allows you to disable the backlight entirely. 
 
-By default the plugin is setup for a PSP-3000 with 8x brightness steps ranging from 0 (off) to 100 (max). 
-
 ## How to use
 
 Press the PSP's **Display (brightness) button** to cycle through the brightness
