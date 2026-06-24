@@ -12,7 +12,7 @@ original idea came from.
 
 Better control over the PSP display brightness! 
 
-This allows you to utilise the full brightness range (0-100), which is otherwise unavailable with a stock PSP.
+Utilise the full brightness range (0-100), which is otherwise unavailable on a stock PSP. Some models (such as PSP-3000) also allows you to disable the backlight entirely. 
 
 ## How to use
 
