@@ -99,6 +99,11 @@ everything else is the base PSP SDK.
   default** - about **80 on battery, 90 plugged in**. At or below that, the
   firmware's own level looks the same as yours, so you won't see a change.
 
+## Testing
+
+ - All testing has been done using a PSP-3000VB 09G running FasterARK
+ - Feedback appreciatd for other models and CFW. 
+
 ## Credits
 
 - **hobbo91** - BetterBright.
