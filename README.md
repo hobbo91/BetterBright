@@ -6,38 +6,39 @@ A brightness control plugin for the PSP, for ARK-4 / FasterARK custom firmware.
 
 Based on the older *bright3* brightness plugin by hiroi01 (itself a mod
 of *bright* by plum) - https://hiroi01.com/?p=prx#bright3 - which is where the
-original screen-patching idea came from. 
+original idea came from. 
 
 ---
 
 ## What it does
 
-Better control over the PSP display brightness, this allows you to utilise
-the full brightness range (0-100) which is otherwise unavailable with a stock PSP.
+Better control over the PSP display brightness. 
+
+This allows you to utilise the full brightness range (0-100),
+which is otherwise unavailable with a stock PSP.
 
 Press the PSP's **Display (brightness) button** to cycle through the brightness
 values you list in `BetterBright.ini`. 
 
 By default you can hold hold a trigger + tap Display Button: **R = brighter, L = dimmer** 
 
-It also **remembers** the level you chose and re-applies it after returning to
+It also remembers the level you chose and re-applies it after returning to
 the XMB, launching a game, or rebooting - instead of snapping back to the
 firmware default. (Resuming from sleep is the exception - see Known issues.)
 
 **Use at your own risk!** 
 
-Whilst the original display is designed by SHARP/Sony to go to its max brightness, 
-the PSP restricts this to preserve battery life and "potentially" long-term damage.  
+Whilst the original display is designed to go to its max brightness, the PSP restricts 
+this to preserve battery life and "potentially" long-term damage.  
 
 **100% brightness will drain the battery faster!**
 
 In an age of quality 1800/2500mAh batteries, and nobody using UMD any more, battery drain isn't
 so much of a concern as was 10+ years ago. 
 
-
 ## Config (`BetterBright.ini`)
 
-- One brightness value per line, `0`-`100`.
+- One brightness value per line, `0`-`100`. `0=backlight off`, `100=full`, this may vary depending on your PSP model and display.
 - Lines starting with `#` are comments.
 
 Two options:
