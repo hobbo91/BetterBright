@@ -13,12 +13,12 @@ original screen-patching idea came from.
 ## What it does
 
 Better control over the PSP display brightness, this allows you to utilise
-the full brightness range (0-100) which is otherwise unavailable the stock PSP firmware.
+the full brightness range (0-100) which is otherwise unavailable with a stock PSP.
 
 Press the PSP's **Display (brightness) button** to cycle through the brightness
 values you list in `BetterBright.ini`. 
 
-By default you can hold hold a trigger + tap Display: **R = brighter, L = dimmer** 
+By default you can hold hold a trigger + tap Display Button: **R = brighter, L = dimmer** 
 
 It also **remembers** the level you chose and re-applies it after returning to
 the XMB, launching a game, or rebooting - instead of snapping back to the
@@ -26,11 +26,13 @@ firmware default. (Resuming from sleep is the exception - see Known issues.)
 
 **Use at your own risk!** 
 
-Whilst the display is designed to go to its max brightness, the PSP restricts this
-to preserve battery life and "potentially" long-term damage.  
+Whilst the original display is designed by SHARP/Sony to go to its max brightness, 
+the PSP restricts this to preserve battery life and "potentially" long-term damage.  
 
-In an age of 1800/2500mAh batteries and nobody using UMD any more, battery drain isn't
-so much of a concern as was in 2004 - 2014. 
+**100% brightness will drain the battery faster!**
+
+In an age of quality 1800/2500mAh batteries, and nobody using UMD any more, battery drain isn't
+so much of a concern as was 10+ years ago. 
 
 
 ## Config (`BetterBright.ini`)
