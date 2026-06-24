@@ -12,13 +12,13 @@ original screen-patching idea came from.
 
 ## What it does
 
-Allows better control over the PSP display brightness, this allows you to utilise
-the full brightness range which is otherwise unavailable the stock PSP firmware.
+Allows finer control over the PSP display brightness, this allows you to utilise
+the full brightness range (0-100) which is otherwise unavailable the stock PSP firmware.
 
 Press the PSP's **Display (brightness) button** to cycle through the brightness
 values you list in `BetterBright.ini`. 
 
-By default you can also hold hold a trigger + tap Display: **R = brighter, L = dimmer** 
+By default you can hold hold a trigger + tap Display: **R = brighter, L = dimmer** 
 
 It also **remembers** the level you chose and re-applies it after returning to
 the XMB, launching a game, or rebooting - instead of snapping back to the
@@ -65,8 +65,10 @@ Both schemes stop at the dimmest/brightest end of your list (no wrap-around).
 Put `BetterBright.prx` and `BetterBright.ini` together in your plugins folder and
 enable BetterBright in the ARK Custom Launcher. 
 
+https://github.com/PSP-Archive/ARK-4/wiki/Plugins
+
 (The included `vsh.txt` / `game.txt` / `pops.txt` in the `legacy` are only for loaders that still use
-seplugins-style text files. Do your self a favour, and just use FasterARK)
+seplugins-style text files. Do your self a favour, and just use ARK-4 or FasterARK. 
 
 ## Build
 
