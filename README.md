@@ -19,7 +19,7 @@ original idea came from.
 * Option to disable console sleep "Powersaving" setting (use with caution) 
 * Works with FW6.35 / FasterARK and ARK-4, no reason this won't work with 6.30 as well.
 
-![Test Image 1]([pic_001.bmp](https://github.com/hobbo91/BetterBright/blob/main/screens/pic_0001.bmp))
+![BetterBright OSD](screens/pic_0001.bmp)
 
 ## How to use
 
