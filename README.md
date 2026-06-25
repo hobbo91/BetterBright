@@ -19,7 +19,7 @@ original idea came from.
 * Option to disable display dimming / backlight auto-off ("Power Save")
 * Option to disable console sleep ("Power Save") (use with caution)
 * Developed and tested on **6.61** / FasterARK and ARK-4, should work fine with 6.60 - older firmwares untested
-
+  
 <table>
   <tr>
     <td><img src="screens/pic_0002.png" width="100%" alt="screen 1"></td>
@@ -28,6 +28,9 @@ original idea came from.
   <tr>
     <td><img src="screens/pic_0005.png" width="100%" alt="screen 3"></td>
     <td><img src="screens/pic_0013.png" width="100%" alt="screen 4"></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="screens/psp-3000vb.jpg" width="100%" alt="PSP-3000VB running BetterBright"></td>
   </tr>
 </table>
 
