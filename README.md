@@ -170,12 +170,7 @@ inside games. Drawing on the frame the system already owns means no race and no
 flicker, in XMB, games and PS1 alike.
  
 **No controller or syscon hooks.** An earlier attempt to lock the buttons during a
-manual screen-off hooked the controller read path - and it crashed the console on
-boot. Reading the Display button directly would need a *syscon* hook, which is
-similarly invasive. Neither earns its keep: holding the Display button already
-turns the screen off on stock firmware, and the Hold switch already locks the
-buttons. So BetterBright touches only the display/brightness path and leaves input
-alone, which is a big part of why it stays stable.
+manual screen-off seems to cause crashes in some games. 
  
 **The idle dim is "invisible".** The PSP's idle dim isn't reported by the
 brightness API, so it can't be read back and undone directly - the only way to
@@ -186,8 +181,7 @@ separated.
 **Firmware-specific.** The brightness patch is found by scanning for a specific
 instruction pattern, and the dim/restore logic is built around the native
 backlight steps this firmware uses. That work was done on **6.61** - it should
-carry to other 6.61 CFW, but older firmware or other PSP models would likely need
-the pattern scan and the levels re-checked.
+carry to other CFW, but older firmware or other PSP models. 
 
 ## Credits
 
