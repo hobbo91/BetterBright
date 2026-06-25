@@ -10,9 +10,14 @@ original idea came from.
 
 ## What it does
 
-Better control over the PSP display brightness! 
-
-Utilise the full brightness range (0-100), which is otherwise unavailable on a stock PSP. Some models (such as PSP-3000) also allows you to disable the backlight entirely. 
+* Fully customisable brightness levels (default is 0-100, with 10x increments) 
+* Remembers brightness state when launching games / rebooting / waking / exiting to XMB
+* Configurable key combo to set brightness level up or down without cycling (works as normal when you press "Display")
+* Option to display the current brightness level (OSD) 
+    * Customise the OSD to change position, size, background and text colours
+* Option to disable display dimming / backlight off "Powersaving" setting
+* Option to disable console sleep "Powersaving" setting (use with caution) 
+* Works with FW6.35 / FasterARK and ARK-4, no reason this won't work with 6.30 as well. 
 
 ## How to use
 
