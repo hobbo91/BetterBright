@@ -82,14 +82,6 @@ an effect when `keep_display_on=0`.
 
 **`keep_display_on`** - keep the screen always on. `1` = on, `0` = off (default).
 
-> The PSP's idle **dim** can't be cancelled on its own - it isn't visible to the
-> brightness API, so it can't be detected and undone. The only way to stop it is
-> to hold off the display idle timer, and because the dim and the backlight
-> **auto-off** are two stages of that *same* timer, stopping the dim also stops
-> the off. So `keep_display_on=1` means the screen stays **fully on** (no dim and
-> no auto-off); `0` gives normal dimming + auto-off per your Power Save settings.
-> **Does not affect auto-sleep** (see `disable_sleep`).
-
 **`disable_sleep`** - stop the PSP from auto-sleeping on its own. Manual sleep
 (the power switch) still works. `1` = on, `0` = off (default). Use with caution -
 the console can stay awake indefinitely.
@@ -140,7 +132,7 @@ this to preserve battery life and "potentially" long-term damage.
 **100% brightness will drain the battery faster!**
 
 In an age of quality 1800/2500mAh batteries, and nobody using UMD any more, battery drain isn't
-so much of a concern as was 10+ years ago.
+so much of a concern as was 10+ years ago. But still, it is a thing. 
 
 ## Known issues
 
@@ -156,6 +148,46 @@ so much of a concern as was 10+ years ago.
 
  - All testing has been done using a PSP-3000 09g running FasterARK.
  - Feedback appreciated for other models and CFW.
+
+## Technical notes
+ 
+A few design decisions, in case they're useful to anyone poking at the source:
+ 
+**Brightness is re-applied, not just set once.** The chosen level is written to
+`BetterBright.dat` and held by a low-frequency worker thread that re-asserts it
+when needed (boot, game launch, return to XMB, resume from sleep). The firmware
+sets its *own* brightness during those transitions, so rather than fighting it in
+real time the plugin waits a beat and puts your level back. (During the first few
+seconds after a load it polls a little faster, so the brief dim-then-bright dip is
+shorter.) Keeping the state on disk - not just in RAM - is what lets it survive
+reboots and cold starts.
+ 
+**The OSD draws into the real frame.** The "Display Brightness: NN" overlay is
+written onto the framebuffer the system is *about* to show, via a hook on
+`sceDisplaySetFrameBuf`. It deliberately does **not** draw from a background
+thread into fixed VRAM - doing that races the GPU and is a known way to crash
+inside games. Drawing on the frame the system already owns means no race and no
+flicker, in XMB, games and PS1 alike.
+ 
+**No controller or syscon hooks.** An earlier attempt to lock the buttons during a
+manual screen-off hooked the controller read path - and it crashed the console on
+boot. Reading the Display button directly would need a *syscon* hook, which is
+similarly invasive. Neither earns its keep: holding the Display button already
+turns the screen off on stock firmware, and the Hold switch already locks the
+buttons. So BetterBright touches only the display/brightness path and leaves input
+alone, which is a big part of why it stays stable.
+ 
+**The idle dim is "invisible".** The PSP's idle dim isn't reported by the
+brightness API, so it can't be read back and undone directly - the only way to
+stop it is to hold off the display idle timer (see `keep_display_on`). The dim and
+the backlight auto-off are two stages of the *same* timer, so they can't be
+separated.
+ 
+**Firmware-specific.** The brightness patch is found by scanning for a specific
+instruction pattern, and the dim/restore logic is built around the native
+backlight steps this firmware uses. That work was done on **6.61** - it should
+carry to other 6.61 CFW, but older firmware or other PSP models would likely need
+the pattern scan and the levels re-checked.
 
 ## Credits
 
