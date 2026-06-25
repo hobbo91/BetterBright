@@ -10,7 +10,7 @@ original idea came from.
 
 ## What it does
 
-* Fully customisable brightness levels (a sensible default list is included: `0, 10, 20, 30, 40, 50, 60, 70 , 80, 90, 100`)
+* Fully customisable brightness levels (default list: `0, 10, 20, 30, 40, 50, 60, 70 , 80, 90, 100`)
 * Remembers brightness state when launching games / rebooting / waking / exiting to XMB
 * Configurable key combo to set brightness level up or down without cycling (the **Display** button still cycles as normal)
 * Option to display the current brightness level (OSD)
