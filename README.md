@@ -115,7 +115,7 @@ after real PSP console finishes:
 | `9`   | Metallic Blue   | `18`  | Lavender Purple |
 
 > Exact on the XMB; in some games' framebuffers the tints are approximate (black
-> and white are always correct), which is why colour is a stretch option.
+> and white are always correct).
 
 **`osd_size`** - `1` = normal, `2` = large (2x).
 **`osd_position`** - `1` = bottom (default), `2` = top.
