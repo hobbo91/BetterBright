@@ -1,5 +1,5 @@
 TARGET = BetterBright
-OBJS = main.o conf.o memory.o
+OBJS = main.o conf.o memory.o osd.o log.o
 
 # ----------------------------------------------------------------------------
 # Path to your ARK-4 source checkout. It must contain:
@@ -33,7 +33,7 @@ ASFLAGS  = $(CFLAGS)
 # That covers sceDisplaySetBrightness/Get, sceCtrlPeekBufferPositive, the kernel
 # string functions, threads, file I/O, etc. So we add:
 #   -lpspsystemctrl_kernel : sctrlHENSetStartModuleHandler
-#   -lpsppower_driver      : scePowerTick (kernel) - hold_brightness
+#   -lpsppower_driver      : scePowerTick (kernel) - keep_display_on
 # Do NOT add -lc / -lm / -lpspuser here: in a kernel PRX they pull in the full
 # user newlib (stdio/malloc) whose lock/syscall stubs aren't provided -> link fails.
 LIBS = -lpspsystemctrl_kernel -lpsppower_driver

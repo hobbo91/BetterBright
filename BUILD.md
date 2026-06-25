@@ -16,6 +16,8 @@ plugin is a normal `make`.
 You already have PSPDEV (you ran `psp-config --pspdev-path` successfully).
 Make sure these are set in the same shell you build from:
 
+https://pspdev.github.io/pspsdk/index.html
+
 ```sh
 export PSPDEV=/path/to/pspdev     # wherever yours lives
 export PATH="$PATH:$PSPDEV/bin"
@@ -93,37 +95,5 @@ ms0:/seplugins/BetterBright.prx 1
 
 in `vsh.txt` (XMB), `game.txt` (PSP games), `pops.txt` (PS1 games) as you like.
 Reboot for it to take effect.
-
----
-
-## What BetterBright changes vs bright3 0.03
-
-* **Brightness now persists.** The value you set is written to
-  `BetterBright.dat` (next to the plugin) and re-applied on the next XMB return /
-  game launch / reboot, so it no longer snaps back to the firmware default. For
-  ~5s after the plugin loads the worker re-asserts your level if the firmware's
-  init lowers it (drift-gated), which is what makes a fresh boot stick.
-* **`hold_brightness` - keeps the screen fully on.** The PSP idle dim isn't
-  visible to `sceDisplayGetBrightness` (confirmed on hardware), so it can't be
-  caught and undone; the only lever that stops it is `scePowerTick`, which resets
-  the display idle timer. The dim and the backlight auto-off are two stages of
-  that one timer, so this also keeps the screen from turning off - I couldn't figure
-  out how to separate. `hold_brightness=1` (default) = screen stays fully on; `0` = normal
-  dim + auto-off. (Adds `-lpsppower_driver`.)
-* **Optional adjust schemes (`combo_mode`).** L/R + Display by default (`1`). 
-   Set combo_mode=1` for "trigger + Display button" (R=brighter, L=dimmer) or
-  `combo_mode=2` for "L+R + Up/Down".
-* **Builds cleanly on the current GCC 15 / newlib toolchain.** Two changes were
-  needed beyond the original 2011 source: `memory.c` now does integer ceiling
-  division instead of `ceil()`/`double` (the Allegrex has no double FPU, so the
-  old code dragged in soft-float helpers that aren't linked in a `-nostdlib`
-  kernel PRX), and the link uses only `-lpspsystemctrl_kernel` (the kernel lib
-  set added by `USE_KERNEL_LIBS` already provides display, ctrl, file I/O,
-  partition memory and string functions; pulling in `-lc`/`-lm` instead breaks
-  the link with missing newlib lock/syscall stubs).
-* **Makefile updated for the modern toolchain**: adds `-fno-pic`
-  and `-mno-check-zero-division` (required by current GCC for kernel PRX), links
-  only `-lpspsystemctrl_kernel` (everything else comes from the `USE_KERNEL_LIBS`
-  default set), and points the include/lib dirs at your ARK-4 checkout.
 
 ---

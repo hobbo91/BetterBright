@@ -9,8 +9,16 @@ typedef struct {
 /* options read from BetterBright.ini (add new options here without touching the
  * ReadItem signature) */
 typedef struct {
-	int combo_mode;       /* 0 = off, 1 = L/R + Display button, 2 = L+R+Up/Down  */
-	int hold_brightness;  /* 1 = keep screen fully on (no idle dim, no auto-off) */
+	int combo_mode;            /* 0 = off, 1 = L/R + Display button, 2 = L+R+Up/Down */
+	int dim_level;             /* -1 = AUTO (2nd-lowest ini value); else 0-100       */
+	int keep_display_on;       /* 1 = never dim AND never auto-off (screen stays on)  */
+	int disable_sleep;         /* 1 = prevent the auto-sleep (idle suspend) timer    */
+	int osd_enable;            /* 1 = show "Display Brightness: NN" on each change    */
+	int debug_enable;          /* 1 = verbose log + DEBUG line on the OSD            */
+	int osd_bg_colour;         /* 1=black 2=white 3=red 4=green 5=blue (bg default 1) */
+	int osd_text_colour;       /* 1=black 2=white 3=red 4=green 5=blue (text def 2)   */
+	int osd_size;              /* 1 = normal, 2 = large (2x)                          */
+	int osd_position;          /* 1 = bottom, 2 = top                                 */
 } BrightSettings;
 
 /* paths */

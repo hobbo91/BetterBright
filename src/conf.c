@@ -18,6 +18,22 @@ static int str_to_int(const char *s)
 	return neg ? -v : v;
 }
 
+/* dim_level= parsing. "AUTO" (any case) -> -1 (use 2nd-lowest ini value at apply
+ * time). A plain number in 0-100 is used as-is. Anything else (out of range,
+ * non-numeric) falls back to 28, per spec. */
+static int parse_dim_level(const char *v)
+{
+	if((v[0]=='A'||v[0]=='a') && (v[1]=='U'||v[1]=='u') &&
+	   (v[2]=='T'||v[2]=='t') && (v[3]=='O'||v[3]=='o'))
+		return -1;
+	if(v[0] >= '0' && v[0] <= '9')
+	{
+		int val = str_to_int(v);
+		if(val >= 0 && val <= 100) return val;
+	}
+	return 28;
+}
+
 /* On-disk format for BetterBright.dat. The magic guards against reading a stale or
  * unrelated file written by an older/newer build. */
 #define BRIGHT_MAGIC 0x42523304   /* 'B''R''3', version 4 */
@@ -107,8 +123,24 @@ static int parse_setting(const char *line, BrightSettings *s)
 
 	if(klen == 10 && strncmp(line, "combo_mode", 10) == 0)
 		s->combo_mode = val;
-	else if(klen == 15 && strncmp(line, "hold_brightness", 15) == 0)
-		s->hold_brightness = val;
+	else if(klen == 9 && strncmp(line, "dim_level", 9) == 0)
+		s->dim_level = parse_dim_level(eq + 1);
+	else if(klen == 15 && strncmp(line, "keep_display_on", 15) == 0)
+		s->keep_display_on = val;
+	else if(klen == 13 && strncmp(line, "disable_sleep", 13) == 0)
+		s->disable_sleep = val;
+	else if(klen == 10 && strncmp(line, "osd_enable", 10) == 0)
+		s->osd_enable = val;
+	else if(klen == 12 && strncmp(line, "debug_enable", 12) == 0)
+		s->debug_enable = val;
+	else if(klen == 13 && strncmp(line, "osd_bg_colour", 13) == 0)
+		s->osd_bg_colour = val;
+	else if(klen == 15 && strncmp(line, "osd_text_colour", 15) == 0)
+		s->osd_text_colour = val;
+	else if(klen == 8 && strncmp(line, "osd_size", 8) == 0)
+		s->osd_size = val;
+	else if(klen == 12 && strncmp(line, "osd_position", 12) == 0)
+		s->osd_position = val;
 
 	return 1;
 }
@@ -149,8 +181,16 @@ int ReadItem(const char *file, Bright *buf, BrightSettings *settings)
 
 	if(settings)                                /* defaults */
 	{
-		settings->combo_mode      = 0;
-		settings->hold_brightness = 1;
+		settings->combo_mode          = 0;
+		settings->dim_level           = -1;   /* AUTO */
+		settings->keep_display_on     = 0;
+		settings->disable_sleep       = 0;
+		settings->osd_enable          = 1;
+		settings->debug_enable        = 0;
+		settings->osd_bg_colour       = 1;    /* black */
+		settings->osd_text_colour     = 2;    /* white */
+		settings->osd_size            = 1;    /* normal */
+		settings->osd_position        = 1;    /* bottom */
 	}
 
 	SceUID fd = sceIoOpen(file, PSP_O_RDONLY, 0777);
