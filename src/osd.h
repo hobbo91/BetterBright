@@ -41,9 +41,9 @@ void osd_note(const char *tag, int level);     /* debug: show "<tag> L=<level>" 
 void osd_debug(const char *event, int level, unsigned int unk1); /* "DEBUG L=.. U=.. event=.." */
 void osd_message(const char *s);               /* one-off message (first-run credit) */
 
-/* Which path the OSD is currently reaching the screen through, as a short static
- * string: "hook", "poll", "auto-hook" or "auto-poll". Used by the DEBUG overlay
- * line and by the log. */
+/* Which mechanism the OSD is currently reaching the screen through, as a short
+ * static string: "api-hook" (drawn in the sceDisplaySetFrameBuf hook) or "fb-poll"
+ * (drawn by polling the live framebuffer). Used by the DEBUG overlay line and log. */
 const char *osd_draw_path_name(void);
 
 /* 1 while the OSD timer is counting (overlay on screen), else 0. */
@@ -51,8 +51,14 @@ int osd_is_visible(void);
 
 /* Set OSD colours/size/position from the ini. Call once before osd_install().
  * text_colour/bg_colour: 1=black 2=white 3=red 4=green 5=blue.
- * size: 1=normal 2=large.  position: 1=bottom 2=top. */
+ * size: 1=1x 2=2x 3=3x 4=4x (integer, crisp).  position: 1=bottom 2=top. */
 void osd_set_style(int text_colour, int bg_colour, int size, int position);
+
+/* Localise the "Brightness" word to the system language index (0-11, the
+ * PSP_IMPOSE_LANGUAGE / PSP_SYSTEMPARAM_LANGUAGE_* enum). Latin-script languages
+ * use the ASCII font; Japanese/Russian/Korean/Chinese use embedded word bitmaps.
+ * Call once at startup. */
+void osd_set_language(int lang);
 
 extern volatile unsigned int osd_last_frame_us; /* time of last drawn frame (µs)   */
 

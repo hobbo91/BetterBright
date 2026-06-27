@@ -21,6 +21,8 @@ typedef struct {
 	int osd_position;          /* 1 = bottom, 2 = top                                 */
 	int osd_draw_mode;         /* 0 = auto (hook, poll fallback), 1 = hook only,      */
 	                           /* 2 = poll only (draw into the live framebuffer)      */
+	int detect_locale;         /* 1 = OSD word in system language, 0 = always English */
+	int sync_fw_level;         /* 1 = keep firmware backlight level (impose) ~= ours  */
 } BrightSettings;
 
 /* paths */

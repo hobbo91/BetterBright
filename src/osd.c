@@ -352,25 +352,106 @@ static volatile int osd_last_bw      = 0;   /* last bufferwidth                 
 static volatile int osd_last_pf      = -1;  /* last pixelformat                   */
 static volatile int osd_last_sync    = -1;  /* last sync mode (0=immediate,1=next)*/
 
-static int osd_strlen(const char *s){ int n = 0; while(s[n]) n++; return n; }
 
-/* Build "Display Brightness: <level>" and show it for OSD_TICKS worker loops.
- * Pure string work - safe to call from the display hook. */
-void osd_notify(int level)
+/* The word "Brightness" per system-language index (PSP_IMPOSE_LANGUAGE / the
+ * PSP_SYSTEMPARAM_LANGUAGE_* enum), for the LATIN-script languages drawn with the
+ * ASCII font (accents dropped: FR Luminosite, IT Luminosita). The non-Latin
+ * languages (Japanese, Russian, Korean, Chinese) are drawn from word images instead
+ * (see osd_word[]); their entries here are just a never-hit English safety net. */
+static const char *const bright_word[] = {
+	"Brightness",   /*  0 Japanese  -> EN fallback (no kana/kanji glyphs) */
+	"Brightness",   /*  1 English   */
+	"Luminosite",   /*  2 French    */
+	"Brillo",       /*  3 Spanish   */
+	"Helligkeit",   /*  4 German    */
+	"Luminosita",   /*  5 Italian   */
+	"Helderheid",   /*  6 Dutch     */
+	"Brilho",       /*  7 Portuguese*/
+	"Brightness",   /*  8 Russian   -> EN fallback (no Cyrillic glyphs)   */
+	"Brightness",   /*  9 Korean    -> EN fallback (no Hangul glyphs)     */
+	"Brightness",   /* 10 Chinese (T) -> EN fallback                      */
+	"Brightness",   /* 11 Chinese (S) -> EN fallback                      */
+};
+#define OSD_NLANGS ((int)(sizeof(bright_word) / sizeof(bright_word[0])))
+
+static int osd_lang = 1;   /* system-language index (default English)            */
+
+void osd_set_language(int lang)
 {
-	static const char lbl[] = "Display Brightness: ";
-	char *p = osd_text;
-	int i = 0;
+	osd_lang = (lang >= 0 && lang < OSD_NLANGS) ? lang : 1;   /* else English */
+}
 
-	if(osd_lock > 0) return;             /* a locked message owns the OSD */
+/* ---- non-Latin "Brightness" word images ----------------------------------
+ * The 8x8 font is Latin-only, so for Japanese/Russian/Korean/Chinese the word is a
+ * pre-rendered 1bpp bitmap (11px tall, MSB-first, row-major), blitted then scaled
+ * exactly like the font. Generated from the macOS system fonts; the number after
+ * it is still the ASCII font. */
+#define OSD_WORD_H 11
+typedef struct { int w, rowbytes; const unsigned char *bits; } OsdWord;
 
-	while(lbl[i]) { *p++ = lbl[i]; i++; }
+/* jp: 明るさ  32x11 */
+static const unsigned char word_jp_bits[] = { 0x00, 0x00, 0x00, 0x00, 0x7b, 0xc3, 0xe0, 0x10, 0x48, 0x40, 0x40, 0x1e, 0x4b, 0xc0, 0x80, 0xf8, 0x78, 0x41, 0x00, 0x08, 0x4c, 0x43, 0xe0, 0x04, 0x4f, 0xc6, 0x10, 0x7e, 0x7c, 0x41, 0x08, 0x80, 0x44, 0x42, 0xd0, 0x80, 0x08, 0x42, 0x70, 0x7c, 0x08, 0xc1, 0xc0, 0x00 };
+/* ru: Яркость  45x11 */
+static const unsigned char word_ru_bits[] = { 0x3f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x61, 0x00, 0x00, 0x00, 0x00, 0x00, 0x41, 0x3c, 0x91, 0xc7, 0x7c, 0x80, 0x61, 0x36, 0xa2, 0x69, 0x90, 0x80, 0x3f, 0x22, 0xa6, 0x38, 0x10, 0x80, 0x11, 0x22, 0xc6, 0x38, 0x10, 0xf0, 0x21, 0x22, 0xa6, 0x38, 0x10, 0x98, 0x61, 0x26, 0xb2, 0x69, 0x90, 0x98, 0xc1, 0x3c, 0x91, 0xc7, 0x10, 0xf0, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00 };
+/* kr: 밝기  20x11 */
+static const unsigned char word_kr_bits[] = { 0x00, 0x00, 0x20, 0x44, 0x9f, 0x20, 0x7c, 0x81, 0x20, 0x44, 0xc1, 0x20, 0x44, 0x82, 0x20, 0x78, 0x82, 0x20, 0x00, 0x04, 0x20, 0x09, 0x98, 0x20, 0x38, 0x90, 0x20, 0x40, 0x80, 0x20, 0x38, 0x00, 0x20 };
+/* zh: 亮度  24x11 */
+static const unsigned char word_zh_bits[] = { 0x02, 0x00, 0x20, 0x7f, 0xe3, 0xfe, 0x00, 0x03, 0xc0, 0x1f, 0x82, 0x48, 0x1f, 0x83, 0xfe, 0x00, 0x02, 0x58, 0x7f, 0xe2, 0x00, 0x49, 0x23, 0xfc, 0x09, 0x06, 0x48, 0x19, 0x24, 0x78, 0x61, 0xe5, 0x8e };
 
+/* Per-language word image; bits==NULL means "use the ASCII bright_word[] instead". */
+static const OsdWord osd_word[OSD_NLANGS] = {
+	{ 32, 4, word_jp_bits },   /*  0 Japanese  */
+	{  0, 0, 0           },   /*  1 English   */
+	{  0, 0, 0           },   /*  2 French    */
+	{  0, 0, 0           },   /*  3 Spanish   */
+	{  0, 0, 0           },   /*  4 German    */
+	{  0, 0, 0           },   /*  5 Italian   */
+	{  0, 0, 0           },   /*  6 Dutch     */
+	{  0, 0, 0           },   /*  7 Portuguese*/
+	{ 45, 6, word_ru_bits },   /*  8 Russian   */
+	{ 20, 3, word_kr_bits },   /*  9 Korean    */
+	{ 24, 3, word_zh_bits },   /* 10 Chinese T */
+	{ 24, 3, word_zh_bits },   /* 11 Chinese S */
+};
+
+/* When set, osd_draw blits this word image before the text (the text is just the
+ * ": NN" part). NULL = pure-ASCII osd_text. Reset by every other text setter. */
+static const OsdWord *osd_word_cur = 0;
+
+/* Append ": <level>" to p. */
+static char *osd_put_level(char *p, int level)
+{
 	if(level < 0)   level = 0;
 	if(level > 100) level = 100;
+	*p++ = ':'; *p++ = ' ';
 	if(level >= 100)     { *p++ = '1'; *p++ = '0'; *p++ = '0'; }
 	else if(level >= 10) { *p++ = (char)('0' + level / 10); *p++ = (char)('0' + level % 10); }
 	else                 { *p++ = (char)('0' + level); }
+	return p;
+}
+
+/* Build "<Brightness>: <level>" and show it for OSD_TICKS worker loops. For Latin
+ * languages the word is ASCII text; for the others it's a word image (osd_word_cur)
+ * and osd_text holds only the ": NN". Pure memory work - safe in the display hook. */
+void osd_notify(int level)
+{
+	const OsdWord *wd = &osd_word[osd_lang];
+	char *p = osd_text;
+
+	if(osd_lock > 0) return;             /* a locked message owns the OSD */
+
+	if(wd->bits)                         /* non-Latin: image + ": NN" */
+	{
+		osd_word_cur = wd;
+		p = osd_put_level(p, level);
+	}
+	else                                 /* Latin: "<word>: NN" all ASCII */
+	{
+		const char *w = bright_word[osd_lang];
+		osd_word_cur = 0;
+		while(*w) *p++ = *w++;
+		p = osd_put_level(p, level);
+	}
 	*p = 0;
 
 	osd_ticks = OSD_TICKS;
@@ -389,6 +470,7 @@ void osd_probe(int level, unsigned int unk1)
 	int sh;
 
 	if(osd_lock > 0) return;
+	osd_word_cur = 0;                    /* ASCII-only line */
 
 	*p++ = 'L'; *p++ = '=';
 	if(level < 0) { *p++ = '-'; u = (unsigned int)(-level); }
@@ -416,6 +498,7 @@ void osd_note(const char *tag, int level)
 	int i = 0;
 
 	if(osd_lock > 0) return;
+	osd_word_cur = 0;                    /* ASCII-only line */
 
 	while(tag[i] && i < 16) { *p++ = tag[i]; i++; }
 	*p++ = ' '; *p++ = 'L'; *p++ = '=';
@@ -438,14 +521,22 @@ void osd_note(const char *tag, int level)
  * otherwise the poll thread is what's reaching the screen. */
 #define OSD_HOOK_LIVE_US 200000u   /* 200 ms */
 
+/* Reports the mechanism ACTUALLY putting the overlay on screen right now, named for
+ * what it does (not the configured mode, and without the "auto" wrapper):
+ *   "api-hook" - drawn inside the hooked sceDisplaySetFrameBuf call, i.e. straight
+ *                onto the frame the game itself is presenting via the display API.
+ *   "fb-poll"  - drawn by the worker polling sceDisplayGetFrameBuf and writing the
+ *                live framebuffer(s) directly (used when the game isn't driving the
+ *                SetFrameBuf hook).
+ * In auto mode it switches between the two live, per whether the hook is firing. */
 const char *osd_draw_path_name(void)
 {
-	if(osd_draw_mode == 1) return "hook";
-	if(osd_draw_mode == 2) return "poll";
+	if(osd_draw_mode == 1) return "api-hook";
+	if(osd_draw_mode == 2) return "fb-poll";
 	/* auto: report whichever is actually carrying the overlay right now */
 	if((sceKernelGetSystemTimeLow() - osd_last_hook_us) <= OSD_HOOK_LIVE_US)
-		return "auto-hook";
-	return "auto-poll";
+		return "api-hook";
+	return "fb-poll";
 }
 
 int osd_is_visible(void){ return osd_ticks > 0; }
@@ -463,10 +554,12 @@ static char *osd_put_dec(char *p, int v)
 }
 static char *osd_put_str(char *p, const char *s){ while(*s) *p++ = *s++; return p; }
 
-/* DEBUG overlay line:
- *   "BB <ver> DEBUG: L=<fw> U=<plugin> event=<tag> draw=<path>"
+/* DEBUG overlay, drawn over TWO lines (a '\n' splits them) so it still fits at the
+ * larger osd_size settings:
+ *   line 1: "BB <ver> DEBUG: L=<fw> U=<plugin>"
+ *   line 2: "event=<tag> draw=<how>"
  * L = firmware/native backlight step (44/60/72/84), U = our actual brightness,
- * draw = which path is reaching the screen (hook / poll / auto-hook / auto-poll).
+ * draw = how it's drawn right now ("api-hook" or "fb-poll", see osd_draw_path_name).
  * Fires on every trigger (press / dim / wake / idle). */
 void osd_debug(const char *event, int level, unsigned int unk1)
 {
@@ -474,12 +567,14 @@ void osd_debug(const char *event, int level, unsigned int unk1)
 	int i = 0;
 
 	if(osd_lock > 0) return;
+	osd_word_cur = 0;                    /* ASCII-only (2-line) */
 
 	p = osd_put_str(p, "BB " BB_VERSION " DEBUG: L=");
 	p = osd_put_dec(p, level);
 	p = osd_put_str(p, " U=");
 	p = osd_put_dec(p, (int)unk1);
-	p = osd_put_str(p, " event=");
+	*p++ = '\n';                                  /* -> line 2 */
+	p = osd_put_str(p, "event=");
 	while(event[i] && i < 12) { *p++ = event[i]; i++; }
 	p = osd_put_str(p, " draw=");
 	p = osd_put_str(p, osd_draw_path_name());
@@ -496,6 +591,7 @@ void osd_message(const char *s)
 {
 	char *p = osd_text;
 	int i = 0;
+	osd_word_cur = 0;                    /* ASCII-only message */
 	while(s[i] && i < 47) { *p++ = s[i]; i++; }
 	*p = 0;
 
@@ -531,7 +627,9 @@ void osd_log_status(void)
 }
 
 /* ---- OSD style (set once from the ini before the hook is installed) -------- */
-static int osd_scale  = 1;   /* 1 = normal, 2 = large                          */
+/* Integer text scale only - each font pixel becomes a uniform sc x sc block, so
+ * every size stays pixel-crisp. 1=1x 2=2x 3=3x 4=4x. */
+static int osd_scale  = 1;   /* integer multiplier (1 = normal)                 */
 static int osd_pos    = 1;   /* 1 = bottom, 2 = top                            */
 static int osd_fg_idx = 2;   /* text colour index (white)                      */
 static int osd_bg_idx = 1;   /* plate colour index (black)                     */
@@ -565,7 +663,7 @@ void osd_set_style(int text_colour, int bg_colour, int size, int position)
 {
 	if(text_colour >= 1 && text_colour <= OSD_NCOLOURS) osd_fg_idx = text_colour;
 	if(bg_colour   >= 1 && bg_colour   <= OSD_NCOLOURS) osd_bg_idx = bg_colour;
-	osd_scale = (size == 2) ? 2 : 1;
+	osd_scale = (size >= 1 && size <= 4) ? size : 1;   /* 1x..4x, else 1x */
 	osd_pos   = (position == 2) ? 2 : 1;
 }
 
@@ -600,27 +698,75 @@ static u16 col16(int idx, int pf)
 	return (idx == 1) ? 0x0000 : 0xFFFF;
 }
 
-/* 16bpp draw (565 / 5551 / 4444): scaled text on a coloured plate. */
-static void draw16(u16 *fb, int stride, int x0, int y0, u16 fg, u16 bg, int sc)
-{
-	int len = osd_strlen(osd_text);
-	int adv = ADVANCE * sc;
-	int w   = len * adv;
-	int gh  = GLYPH * sc;
-	int bx, by, ci, r, c, sx, sy;
+/* The overlay text can contain '\n' to span multiple lines (the DEBUG view uses
+ * two). Up to this many lines are laid out; extra '\n's are ignored. */
+#define OSD_MAXLINES 3
 
-	for(by = y0 - 2; by < y0 + gh + 2; by++)
+/* ---- plate fill (one rectangle behind all the text) ----------------------- */
+static void fill_plate16(u16 *fb, int stride, int x, int y, int w, int h, u16 bg)
+{
+	int bx, by;
+	for(by = y; by < y + h; by++)
 	{
 		if(by < 0 || by >= SCR_H) continue;
-		for(bx = x0 - 3; bx < x0 + w + 3; bx++)
+		for(bx = x; bx < x + w; bx++)
 		{
 			if(bx < 0 || bx >= SCR_W || bx >= stride) continue;
 			fb[by * stride + bx] = bg;
 		}
 	}
-	for(ci = 0; osd_text[ci]; ci++)
+}
+static void fill_plate32(u32 *fb, int stride, int x, int y, int w, int h, u32 bg)
+{
+	int bx, by;
+	for(by = y; by < y + h; by++)
 	{
-		const u8 *g = &bb_font[((u8)osd_text[ci]) * 8];
+		if(by < 0 || by >= SCR_H) continue;
+		for(bx = x; bx < x + w; bx++)
+		{
+			if(bx < 0 || bx >= SCR_W || bx >= stride) continue;
+			fb[by * stride + bx] = bg;
+		}
+	}
+}
+
+/* ---- one line of glyphs (no plate) ---------------------------------------- */
+/* sc is an integer multiplier, so each font pixel becomes a uniform sc x sc block
+ * (pixel-crisp). text/len is the line to draw (a slice of osd_text). */
+static void draw_line16(u16 *fb, int stride, int x0, int y0, const char *text, int len, u16 fg, int sc)
+{
+	int adv = ADVANCE * sc, ci, r, c, sx, sy;
+	for(ci = 0; ci < len; ci++)
+	{
+		const u8 *g = &bb_font[((u8)text[ci]) * 8];
+		int gx = x0 + ci * adv;
+		for(r = 0; r < 8; r++)
+		{
+			u8 row = g[r];
+			for(c = 0; c < 8; c++)
+			{
+				if(!(row & (128 >> c))) continue;
+				for(sy = 0; sy < sc; sy++)
+				{
+					int py = y0 + r * sc + sy;
+					if(py < 0 || py >= SCR_H) continue;
+					for(sx = 0; sx < sc; sx++)
+					{
+						int px = gx + c * sc + sx;
+						if(px < 0 || px >= SCR_W || px >= stride) continue;
+						fb[py * stride + px] = fg;
+					}
+				}
+			}
+		}
+	}
+}
+static void draw_line32(u32 *fb, int stride, int x0, int y0, const char *text, int len, u32 fg, int sc)
+{
+	int adv = ADVANCE * sc, ci, r, c, sx, sy;
+	for(ci = 0; ci < len; ci++)
+	{
+		const u8 *g = &bb_font[((u8)text[ci]) * 8];
 		int gx = x0 + ci * adv;
 		for(r = 0; r < 8; r++)
 		{
@@ -644,74 +790,149 @@ static void draw16(u16 *fb, int stride, int x0, int y0, u16 fg, u16 bg, int sc)
 	}
 }
 
-/* 32bpp draw (8888): scaled text on a coloured plate. */
-static void draw32(u32 *fb, int stride, int x0, int y0, u32 fg, u32 bg, int sc)
+/* ---- one word image (no plate), scaled sc x like the font ----------------- */
+static void blit_word16(u16 *fb, int stride, int x0, int y0, const OsdWord *wd, u16 fg, int sc)
 {
-	int len = osd_strlen(osd_text);
-	int adv = ADVANCE * sc;
-	int w   = len * adv;
-	int gh  = GLYPH * sc;
-	int bx, by, ci, r, c, sx, sy;
-
-	for(by = y0 - 2; by < y0 + gh + 2; by++)
+	int r, c, sx, sy;
+	for(r = 0; r < OSD_WORD_H; r++)
 	{
-		if(by < 0 || by >= SCR_H) continue;
-		for(bx = x0 - 3; bx < x0 + w + 3; bx++)
+		const unsigned char *rowp = wd->bits + r * wd->rowbytes;
+		for(c = 0; c < wd->w; c++)
 		{
-			if(bx < 0 || bx >= SCR_W || bx >= stride) continue;
-			fb[by * stride + bx] = bg;
+			if(!(rowp[c >> 3] & (0x80 >> (c & 7)))) continue;
+			for(sy = 0; sy < sc; sy++)
+			{
+				int py = y0 + r * sc + sy;
+				if(py < 0 || py >= SCR_H) continue;
+				for(sx = 0; sx < sc; sx++)
+				{
+					int px = x0 + c * sc + sx;
+					if(px < 0 || px >= SCR_W || px >= stride) continue;
+					fb[py * stride + px] = fg;
+				}
+			}
 		}
 	}
-	for(ci = 0; osd_text[ci]; ci++)
+}
+static void blit_word32(u32 *fb, int stride, int x0, int y0, const OsdWord *wd, u32 fg, int sc)
+{
+	int r, c, sx, sy;
+	for(r = 0; r < OSD_WORD_H; r++)
 	{
-		const u8 *g = &bb_font[((u8)osd_text[ci]) * 8];
-		int gx = x0 + ci * adv;
-		for(r = 0; r < 8; r++)
+		const unsigned char *rowp = wd->bits + r * wd->rowbytes;
+		for(c = 0; c < wd->w; c++)
 		{
-			u8 row = g[r];
-			for(c = 0; c < 8; c++)
+			if(!(rowp[c >> 3] & (0x80 >> (c & 7)))) continue;
+			for(sy = 0; sy < sc; sy++)
 			{
-				if(!(row & (128 >> c))) continue;
-				for(sy = 0; sy < sc; sy++)
+				int py = y0 + r * sc + sy;
+				if(py < 0 || py >= SCR_H) continue;
+				for(sx = 0; sx < sc; sx++)
 				{
-					int py = y0 + r * sc + sy;
-					if(py < 0 || py >= SCR_H) continue;
-					for(sx = 0; sx < sc; sx++)
-					{
-						int px = gx + c * sc + sx;
-						if(px < 0 || px >= SCR_W || px >= stride) continue;
-						fb[py * stride + px] = fg;
-					}
+					int px = x0 + c * sc + sx;
+					if(px < 0 || px >= SCR_W || px >= stride) continue;
+					fb[py * stride + px] = fg;
 				}
 			}
 		}
 	}
 }
 
-/* Draw the overlay into the buffer that is about to be displayed. */
+/* Draw the overlay into the buffer that is about to be displayed. Splits osd_text
+ * on '\n' into lines, draws one plate behind them all, then each line centred. When
+ * osd_word_cur is set (non-Latin "Brightness"), a word image is blitted before the
+ * single line of text (the ": NN"), baseline-aligned. */
 static void osd_draw(void *topaddr, int bufferwidth, int pixelformat)
 {
-	int len, w, x0, y0, sc, gh;
+	int sc, gh, adv, gap, nlines, i;
+	int lstart[OSD_MAXLINES], llen[OSD_MAXLINES];
+	int maxlen, maxw, total_h, plate_x, plate_y, y, k, s;
 	void *fb;
 
 	if(!topaddr || bufferwidth <= 0 || osd_text[0] == 0) return;
 
 	sc  = osd_scale;
-	len = osd_strlen(osd_text);
-	w   = len * ADVANCE * sc;
 	gh  = GLYPH * sc;
-	x0  = (SCR_W - w) / 2; if(x0 < 0) x0 = 0;
-	y0  = (osd_pos == 2) ? 8 : (SCR_H - gh - 6);   /* top : bottom, off the edge */
+	adv = ADVANCE * sc;
+	gap = 2 * sc;                          /* blank rows between lines */
 
 	/* uncached mirror so the display sees the writes without a cache flush */
 	fb = (void *)(((u32)topaddr) | 0x40000000);
 
+	/* ---- non-Latin: [word image][": NN"] on one line ---------------------- */
+	if(osd_word_cur)
+	{
+		const OsdWord *wd = osd_word_cur;
+		int imgW = wd->w * sc, imgH = OSD_WORD_H * sc;
+		int tlen = 0; while(osd_text[tlen]) tlen++;
+		int textW = tlen * adv;
+		int lineW = imgW + textW;
+		int px = (SCR_W - lineW) / 2; if(px < 0) px = 0;
+		int py = (osd_pos == 2) ? 8 : (SCR_H - imgH - 6);
+		int ty = py + (imgH - gh);          /* baseline-align the number to the word */
+
+		if(pixelformat == 3)
+		{
+			u32 fg = col32(osd_fg_idx), bg = col32(osd_bg_idx);
+			fill_plate32((u32 *)fb, bufferwidth, px - 3, py - 2, lineW + 6, imgH + 4, bg);
+			blit_word32((u32 *)fb, bufferwidth, px, py, wd, fg, sc);
+			draw_line32((u32 *)fb, bufferwidth, px + imgW, ty, osd_text, tlen, fg, sc);
+		}
+		else if(pixelformat >= 0 && pixelformat <= 2)
+		{
+			u16 fg = col16(osd_fg_idx, pixelformat), bg = col16(osd_bg_idx, pixelformat);
+			fill_plate16((u16 *)fb, bufferwidth, px - 3, py - 2, lineW + 6, imgH + 4, bg);
+			blit_word16((u16 *)fb, bufferwidth, px, py, wd, fg, sc);
+			draw_line16((u16 *)fb, bufferwidth, px + imgW, ty, osd_text, tlen, fg, sc);
+		}
+		return;
+	}
+
+	/* split osd_text into lines on '\n' */
+	nlines = 0; s = 0;
+	for(k = 0; ; k++)
+	{
+		char ch = osd_text[k];
+		if(ch == '\n' || ch == 0)
+		{
+			if(nlines < OSD_MAXLINES) { lstart[nlines] = s; llen[nlines] = k - s; nlines++; }
+			if(ch == 0) break;
+			s = k + 1;
+		}
+	}
+	if(nlines == 0) return;
+
+	maxlen = 0;
+	for(i = 0; i < nlines; i++) if(llen[i] > maxlen) maxlen = llen[i];
+	maxw    = maxlen * adv;
+	total_h = nlines * gh + (nlines - 1) * gap;
+	plate_x = (SCR_W - maxw) / 2; if(plate_x < 0) plate_x = 0;
+	plate_y = (osd_pos == 2) ? 8 : (SCR_H - total_h - 6);   /* top : bottom */
+
 	if(pixelformat == 3)                       /* 8888 */
-		draw32((u32 *)fb, bufferwidth, x0, y0,
-		       col32(osd_fg_idx), col32(osd_bg_idx), sc);
+	{
+		u32 fg = col32(osd_fg_idx), bg = col32(osd_bg_idx);
+		fill_plate32((u32 *)fb, bufferwidth, plate_x - 3, plate_y - 2, maxw + 6, total_h + 4, bg);
+		y = plate_y;
+		for(i = 0; i < nlines; i++)
+		{
+			int lx = (SCR_W - llen[i] * adv) / 2; if(lx < 0) lx = 0;
+			draw_line32((u32 *)fb, bufferwidth, lx, y, &osd_text[lstart[i]], llen[i], fg, sc);
+			y += gh + gap;
+		}
+	}
 	else if(pixelformat >= 0 && pixelformat <= 2)  /* 565 / 5551 / 4444 */
-		draw16((u16 *)fb, bufferwidth, x0, y0,
-		       col16(osd_fg_idx, pixelformat), col16(osd_bg_idx, pixelformat), sc);
+	{
+		u16 fg = col16(osd_fg_idx, pixelformat), bg = col16(osd_bg_idx, pixelformat);
+		fill_plate16((u16 *)fb, bufferwidth, plate_x - 3, plate_y - 2, maxw + 6, total_h + 4, bg);
+		y = plate_y;
+		for(i = 0; i < nlines; i++)
+		{
+			int lx = (SCR_W - llen[i] * adv) / 2; if(lx < 0) lx = 0;
+			draw_line16((u16 *)fb, bufferwidth, lx, y, &osd_text[lstart[i]], llen[i], fg, sc);
+			y += gh + gap;
+		}
+	}
 	/* any other format: leave the frame untouched */
 }
 

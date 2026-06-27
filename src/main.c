@@ -22,7 +22,13 @@
 #include <pspctrl.h>             /* sceCtrlPeekBufferPositive, PSP_CTRL_* , SceCtrlData */
 #include <psppower.h>            /* scePowerTick, PSP_POWER_TICK_DISPLAY               */
 #include <pspsdk.h>              /* pspSdkSetK1 - clear syscall guard around the ctrl read */
+#include <pspimpose_driver.h>    /* sceImposeGetParam, PSP_IMPOSE_LANGUAGE (read-only)  */
 #include <string.h>
+
+/* Forward-declared (rather than pulling in pspsysmem_kernel.h, which can clash with
+ * the ARK headers) - resolved from libpspkernel at link time. Returns the PSP model
+ * id: 0 = 1000, 1 = 2000, 2 = 3000, 3 = Go, ... Used for the empty-list stock steps. */
+int sceKernelGetModel(void);
 
 /*
  * We only need SceModule2 and sctrlHENSetStartModuleHandler from the CFW SDK.
@@ -64,6 +70,10 @@ int  g_keep_display_on = 0;  /* from ini: 1 = never dim AND never auto-off      
 int  g_disable_sleep = 0;    /* from ini: 1 = prevent the auto-sleep timer      */
 int  g_osd_enable    = 1;    /* from ini: 1 = show "Display Brightness: NN"     */
 int  g_osd_draw_mode = 0;    /* from ini: 0=auto 1=hook-only 2=poll-only        */
+int  g_sys_language  = 1;    /* system language index (read at boot; default EN) */
+int  g_sync_fw_level = 0;    /* from ini: 1 = sync firmware (impose) level to ours */
+volatile int g_impose_guard   = 0;  /* 1 while WE write the impose level (re-entrancy) */
+volatile int g_impose_pending = -1; /* >=0: a USER brightness the worker should sync */
 int  g_debug_enable  = 0;    /* from ini: 0=off, 1=DEBUG OSD line, 2=OSD + log file */
 volatile int g_running = 1;  /* worker thread run flag                          */
 volatile int g_dirty   = 0;  /* "brightness changed, please persist" flag       */
@@ -106,6 +116,52 @@ int GetPatchAddr(u32 text_addr, u32 text_end, u32 *addr)
 	return -1; /* not found */
 }
 
+/* Fill lv[4] with this model's 4 stock backlight steps, used when the ini brightness
+ * list is left empty. PSP-1000/2000 use a lower set than 3000/Go/Street (matches the
+ * reference Brightness-Control plugin). */
+static void StockLevels(int lv[4])
+{
+	int m = sceKernelGetModel();
+	if(m == 0 || m == 1) { lv[0] = 36; lv[1] = 44; lv[2] = 56; lv[3] = 68; }  /* 1000/2000 */
+	else                 { lv[0] = 44; lv[1] = 60; lv[2] = 72; lv[3] = 84; }  /* 3000/Go/...*/
+}
+
+/* ----------------------------------------------------------------------------
+ * Firmware backlight level (impose) sync   [sync_fw_level, default off]
+ *
+ * Keeps the firmware's OWN backlight level - the 4 stock steps as the impose
+ * "backlight brightness" param (0-3) - in step with our brightness, by rounding our
+ * level UP to the nearest stock step (clamped to the top): U=90->84, U=50->60,
+ * U=10->44. Our exact brightness is re-applied right after, so the visible value is
+ * unchanged.
+ *
+ * STABILITY - why this no longer hangs at boot: the previous version wrote the
+ * impose param from ApplySaved(), which runs at module_start, i.e. before the
+ * display/impose subsystem has settled - that early WRITE is what hung the PSP. Now
+ * we ONLY sync in response to a real user press (ApplyIndex), and even then defer
+ * the write to the worker and only once the load window has closed. A user press
+ * can't happen until well after boot, so no impose write ever occurs at boot. The
+ * write itself is guarded against re-entering our brightness patch. No-op unless
+ * sync_fw_level is enabled.
+ * ------------------------------------------------------------------------- */
+
+/* Index (0-3) of the smallest stock step >= u, clamped to the top (round up). */
+static int CeilStockIdx(int u)
+{
+	int lv[4], i;
+	StockLevels(lv);
+	for(i = 0; i < 4; i++) if(lv[i] >= u) return i;
+	return 3;
+}
+
+/* Request a firmware-level sync to brightness u. Cheap/safe from any context - just
+ * records it; the worker does the actual write. No-op unless sync_fw_level is on.
+ * Called ONLY from a user brightness change, never from boot/wake/restore. */
+static void SyncImpose(int u)
+{
+	if(g_sync_fw_level && u >= 0) g_impose_pending = u;
+}
+
 /* ----------------------------------------------------------------------------
  * Brightness application + persistence
  * ------------------------------------------------------------------------- */
@@ -120,6 +176,7 @@ static void ApplyIndex(int i)
 	cur         = i;
 	saved_level = bright_buf[i].level;
 	sceDisplaySetBrightness(saved_level, 0);
+	SyncImpose(saved_level);                    /* request FW-level sync (if enabled) */
 	if(g_osd_enable) osd_notify(saved_level);   /* show "Display Brightness: NN" */
 	log_kv("apply.index", cur);
 	log_kv("apply.level", saved_level);         /* brightness we just set         */
@@ -141,15 +198,23 @@ static void StepForwardClamp(void)
 {
 	int n = (cur < 0) ? 0 : (cur + 1);
 	if(n > bright_count - 1) n = bright_count - 1;
-	if(n != cur) ApplyIndex(n);                       /* moved -> apply (+OSD) */
-	else if(g_osd_enable) osd_notify(saved_level);      /* at max -> still show OSD */
+	if(n != cur) ApplyIndex(n);                         /* moved -> apply (+OSD +sync) */
+	else                                                /* already at max: */
+	{
+		SyncImpose(saved_level);                        /* re-pin FW level (it drifts each press) */
+		if(g_osd_enable) osd_notify(saved_level);       /* still show OSD */
+	}
 }
 static void StepBackwardClamp(void)
 {
 	int n = (cur < 0) ? 0 : (cur - 1);
 	if(n < 0) n = 0;
 	if(n != cur) ApplyIndex(n);
-	else if(g_osd_enable) osd_notify(saved_level);      /* at min -> still show OSD */
+	else                                                /* already at min: */
+	{
+		SyncImpose(saved_level);
+		if(g_osd_enable) osd_notify(saved_level);
+	}
 }
 
 /* Re-apply the remembered brightness WITHOUT advancing or re-saving. */
@@ -195,12 +260,16 @@ static void ApplyDim(void)
  * Tracks the firmware's last native level and when the patch last fired, so the
  * one ambiguous transition (84->44) can be split by timing. */
 static volatile int g_last_native = -1;
-static volatile unsigned int g_last_patch_us = 0;
+static volatile unsigned int g_last_press_us = 0; /* time of the last GENUINE press  */
 static volatile int g_dimmed = 0;                 /* 1 = we've applied our own dim   */
 static volatile unsigned int g_last_wake_us = 0;  /* guards against re-dim on wake   */
 
-#define WRAP_RECENT_US 5000000u   /* 5s: a real wrap follows a press within this;
-                                     a firmware idle-reset comes minutes later */
+#define WRAP_RECENT_US 5000000u   /* 5s: a real wrap follows a PRESS within this;
+                                     a firmware idle-reset comes minutes later.
+                                     Measured from the last genuine press (NOT the
+                                     last patch call) so firmware re-asserts - which
+                                     happen when brightness is above the FW default -
+                                     can't make an idle-dim look like a recent wrap */
 #define REDIM_GUARD_US 8000000u   /* don't re-dim within 8s of a wake (the wake's own
                                      firmware re-assert must not look like new idle) */
 #define ANY_BTN (PSP_CTRL_SELECT|PSP_CTRL_START|PSP_CTRL_UP|PSP_CTRL_RIGHT|PSP_CTRL_DOWN| \
@@ -220,21 +289,27 @@ static void DbgEvent(const char *ev, int level)
 void sceDisplaySetBrightnessPatched(int level, int unk1)
 {
 	unsigned int now = sceKernelGetSystemTimeLow();
-	unsigned int gap = now - g_last_patch_us;
 	int prev = g_last_native;
 	int press, did_combo = 0;
 	(void)unk1;
-	g_last_patch_us = now;
 	g_last_native   = level;
+
+	/* This call was triggered by OUR own impose write (sync_fw_level), not a press
+	 * or firmware event - update the baseline and bail. Only ever set when
+	 * sync_fw_level is on, so inert by default. */
+	if(g_impose_guard) return;
 
 	/* A real Display press steps the native level UP (44->60->72->84) or wraps
 	 * 84->44. The firmware off/idle/wake instead resets DOWN to 44 or repeats the
 	 * level. The only collision is 84->44 - a genuine wrap arrives moments after
-	 * the previous press, a firmware reset arrives after a long idle. */
+	 * the previous PRESS, a firmware reset arrives long after one. */
 	if(prev < 0)                       press = 1;                      /* boot -> press */
 	else if(level == prev)             press = 0;                      /* repeat -> firmware */
-	else if(prev == 84 && level == 44) press = (gap < WRAP_RECENT_US); /* wrap iff recent */
+	else if(prev == 84 && level == 44)                                 /* wrap iff a press was recent */
+		press = ((now - g_last_press_us) < WRAP_RECENT_US);
 	else                               press = (level > prev);         /* up=press, down=firmware */
+
+	if(press) g_last_press_us = now;   /* record the press time for the next wrap test */
 
 	if(!press)
 	{
@@ -284,6 +359,38 @@ void sceDisplaySetBrightnessPatched(int level, int unk1)
  * its own level during init; this puts yours back). */
 #define LOAD_TICKS 125            /* 125 * 80ms ~= 10s */
 static volatile int g_load_ticks = 0;
+
+/* Worker-only: perform a pending firmware-level sync, if any. Writes the impose
+ * backlight step (rounded UP from our level), guarded against patch re-entrancy,
+ * then RE-APPLIES our exact brightness (the impose write coarsens the panel to the
+ * stock step, so we restore the fine value back-to-back). Held off entirely until
+ * the load window has closed, so it never fires near boot. */
+static void ServiceImpose(void)
+{
+	int idx;
+	u32 k1;
+
+	if(g_impose_pending < 0) return;           /* nothing requested */
+	if(!g_sync_fw_level || g_load_ticks > 0 || saved_level < 0) return;  /* not yet / off */
+	g_impose_pending = -1;
+
+	idx = CeilStockIdx(saved_level);
+
+	k1 = pspSdkSetK1(0);
+	g_impose_guard = 1;
+	sceImposeSetParam(PSP_IMPOSE_BACKLIGHT_BRIGHTNESS, idx);
+	g_impose_guard = 0;
+	sceDisplaySetBrightness(saved_level, 0);   /* restore our exact value (bypasses the patch) */
+	pspSdkSetK1(k1);
+
+	{
+		int lv[4];
+		StockLevels(lv);
+		g_last_native = lv[idx];                /* keep press baseline in sync */
+		log_kv("impose.idx", idx);
+		DbgEvent("imposed", lv[idx]);           /* visible test: L=<stock step> U=<level> */
+	}
+}
 
 /* ----------------------------------------------------------------------------
  * Worker thread (always runs while the plugin is loaded).
@@ -355,6 +462,11 @@ int WorkerThread(SceSize args, void *argp)
 			g_last_wake_us = sceKernelGetSystemTimeLow();
 		}
 
+		/* (a0) firmware-level sync (sync_fw_level): apply a pending impose write from
+		 * this clean context. Self-gates to OFF and to load_ticks==0, so it never
+		 * fires near boot - this is what fixes the old boot hang. */
+		ServiceImpose();
+
 		/* (a) load-window persistence: re-apply our level for ~10s after load if
 		 * the firmware's init lowered it. (now > 0 just skips a transient 0.) */
 		if(g_load_ticks > 0)
@@ -412,7 +524,7 @@ int WorkerThread(SceSize args, void *argp)
 			osd_tick();
 
 		/* (d2) note when the OSD's effective draw path flips (e.g. entering a game
-		 * that doesn't drive the hook -> auto-poll). Pointer compare is fine: the
+		 * that doesn't drive the hook -> fb-poll). Pointer compare is fine: the
 		 * names are static strings. Only meaningful when the log is on. */
 		if(g_osd_enable && log_is_on())
 		{
@@ -514,27 +626,57 @@ int module_start(SceSize args, void *argp)
 	strcpy(path, (char *)argp);
 	GetConfigPath(path);
 
+	/* Count VALID brightness values in the ini. <=0 means none were given (or the
+	 * file is missing) - that's allowed: we fall back to the 4 model stock steps.
+	 * Reserve room for 4 so the fallback always fits. */
 	bright_count = CountItem(path);
-	if(bright_count <= 0) return -1;
-
-	bright_buf = (Bright *)memoryAllocEx("ms_malloc", MEMORY_KERN_HI, 0,
-	                                     sizeof(Bright) * bright_count, PSP_SMEM_Low, NULL);
+	{
+		int want = (bright_count > 0) ? bright_count : 4;
+		bright_buf = (Bright *)memoryAllocEx("ms_malloc", MEMORY_KERN_HI, 0,
+		                                     sizeof(Bright) * want, PSP_SMEM_Low, NULL);
+	}
 	if(!bright_buf) return -1;
 
-	/* ReadItem fills bright_buf and sets every settings field (defaults first). */
+	/* ReadItem fills bright_buf with the valid values and sets every settings field
+	 * (defaults first), returning how many valid values it stored. */
 	{
 		BrightSettings settings;
-		ReadItem(path, bright_buf, &settings);
+		int n = ReadItem(path, bright_buf, &settings);
 		g_combo_mode       = settings.combo_mode;
 		g_dim_level        = settings.dim_level;
 		g_keep_display_on  = settings.keep_display_on;
 		g_disable_sleep    = settings.disable_sleep;
 		g_osd_enable       = settings.osd_enable;
 		g_debug_enable     = settings.debug_enable;
+		g_sync_fw_level    = settings.sync_fw_level;
 		osd_set_style(settings.osd_text_colour, settings.osd_bg_colour,
 		              settings.osd_size, settings.osd_position);
 		osd_set_draw_mode(settings.osd_draw_mode);
 		g_osd_draw_mode = settings.osd_draw_mode;
+
+		/* Localise the OSD "Brightness" word to the system language when
+		 * detect_locale=1; otherwise force English. (Read-only impose param; k1
+		 * cleared as this is a user-facing kernel call.) */
+		if(settings.detect_locale)
+		{
+			u32 k1 = pspSdkSetK1(0);
+			g_sys_language = sceImposeGetParam(PSP_IMPOSE_LANGUAGE);
+			pspSdkSetK1(k1);
+		}
+		else
+			g_sys_language = 1;   /* English */
+		osd_set_language(g_sys_language);
+
+		if(n > 0)
+			bright_count = n;
+		else
+		{
+			/* No usable values in the ini -> cycle the 4 stock steps for this model. */
+			int lv[4], i;
+			StockLevels(lv);
+			for(i = 0; i < 4; i++) bright_buf[i].level = lv[i];
+			bright_count = 4;
+		}
 	}
 
 	/* Bring up logging as early as we can (the ini is the first thing we know).
@@ -556,6 +698,9 @@ int module_start(SceSize args, void *argp)
 		log_kv("settings.debug_enable",         g_debug_enable);
 		log_kv("settings.first_run",            g_first_run);
 		log_kv("ini.bright_count",              bright_count);
+		log_kv("model",                         sceKernelGetModel());
+		log_kv("system.language",               g_sys_language);
+		log_kv("settings.sync_fw_level",        g_sync_fw_level);
 	}
 
 	/* Restore remembered brightness (if any) and resume the cycle just after it. */

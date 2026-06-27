@@ -14,7 +14,8 @@ original idea came from.
 * Remembers brightness state when launching games / rebooting / waking / exiting to XMB
 * Configurable key combo to set brightness level up or down without cycling (the **Display** button still cycles as normal)
 * Option to display the current brightness level (OSD)
-    * Customise the OSD position, size, background and text colours
+    * Shows in XMB, games and PS1 - with an automatic fallback draw method so it reaches games the normal method can't
+    * Customise the OSD position, size (1x-4x), background and text colours
 * Option to choose a custom "dim" level
 * Option to disable display dimming / backlight auto-off ("Power Save")
 * Option to disable console sleep ("Power Save") (use with caution)
@@ -62,7 +63,10 @@ just use ARK-4 or FasterARK.)
 
 - One brightness value per line, `0`-`100`. `0` = backlight off, `100` = full
   (this may vary depending on your PSP model and display).
-- Lines starting with `#` are comments.
+- Only whole numbers `0`-`100` are accepted; blank lines, `#` comments and any
+  malformed line are ignored.
+- **Leave the list empty** to just cycle your model's four stock backlight steps
+  (e.g. 44/60/72/84 on a 3000) instead of custom values.
 - Everything below the list is a plugin option:
 
 **`combo_mode`** - one optional adjust scheme (the plain Display button always
@@ -86,9 +90,12 @@ an effect when `keep_display_on=0`.
 (the power switch) still works. `1` = on, `0` = off (default). Use with caution -
 the console can stay awake indefinitely.
 
-**`osd_enable`** - briefly show **"Display Brightness: NN"** when you change it.
-Works in XMB, games and PS1. `1` = on (default), `0` = off (the overlay code
-isn't installed at all).
+**`osd_enable`** - briefly show **"Brightness: NN"** when you change it, with the word
+in your **system language**. Latin languages (English, French, German, Spanish,
+Italian, Dutch, Portuguese) use the built-in font; Japanese (明るさ), Korean (밝기),
+Chinese (亮度) and Russian (Яркость) use small embedded word images, so they render
+too (clearest at `osd_size` 2+). Works in XMB, games and PS1. `1` = on (default),
+`0` = off (the overlay code isn't installed at all).
 
 **`osd_bg_colour`** / **`osd_text_colour`** - the plate and text colours of the
 OSD. Defaults are `1` (black plate) and `2` (white text). The palette is named
@@ -106,11 +113,19 @@ after real PSP console finishes:
 | `8`   | Radiant Red     | `17`  | Deep Red        |
 | `9`   | Metallic Blue   | `18`  | Lavender Purple |
 
-**`osd_size`** - `1` = normal, `2` = large (2x).
+**`osd_size`** - text size: `1` = 1x (normal), `2` = 2x, `3` = 3x, `4` = 4x.
 **`osd_position`** - `1` = bottom (default), `2` = top.
 
-**`debug_enable`** - writes a verbose `BetterBright.log` and shows a debug line on
-the OSD for every trigger. For troubleshooting. `0` = off (default).
+**`osd_draw_mode`** - how the OSD is drawn. `0` = auto (default): draw on the frame
+the game presents, and automatically fall back to drawing the live framebuffer for
+games that don't drive that path. `1` = hook only (original method, no fallback).
+`2` = poll only (always draw the live framebuffer). Auto covers virtually every
+game; the other two are escape hatches if a title misbehaves.
+
+**`debug_enable`** - diagnostics, for troubleshooting. `0` = off (default). `1` = an
+on-screen debug line on every brightness event (press/combo/dim/wake/idle) showing
+the firmware level, your level, the event, and how the OSD is being drawn. `2` =
+everything in `1` plus a detailed, timestamped `BetterBright.log` next to the plugin.
 
 ## Files
 
@@ -136,9 +151,10 @@ so much of a concern as was 10+ years ago. But still, it is a thing.
 
 ## Known issues
 
-- **The OSD may not appear in a few titles** (e.g. GTA: Liberty City Stories).
-  Brightness control itself still works - it's only the on-screen text that some
-  games' rendering hides. Most games show the OSD in-game normally.
+- **The OSD reaches the vast majority of games now**, including ones the original
+  method couldn't (GTA: LCS, LEGO Batman). If a specific title still hides or
+  flickers the overlay, try `osd_draw_mode=1`. Brightness control itself always
+  works regardless.
 - **OSD colour tints are approximate in some games' framebuffers.** They're exact
   on the XMB; black and white are always correct everywhere.
 - If something external changes the backlight in a way the plugin doesn't catch,
@@ -162,12 +178,20 @@ seconds after a load it polls a little faster, so the brief dim-then-bright dip 
 shorter.) Keeping the state on disk - not just in RAM - is what lets it survive
 reboots and cold starts.
  
-**The OSD draws into the real frame.** The "Display Brightness: NN" overlay is
-written onto the framebuffer the system is *about* to show, via a hook on
-`sceDisplaySetFrameBuf`. It deliberately does **not** draw from a background
-thread into fixed VRAM - doing that races the GPU and is a known way to crash
-inside games. Drawing on the frame the system already owns means no race and no
-flicker, in XMB, games and PS1 alike.
+**The OSD draws into the real frame, two ways.** Normally the "Brightness: NN"
+overlay is written onto the framebuffer the system is *about* to show, via a
+hook on `sceDisplaySetFrameBuf` - no GPU race, no flicker. Some games never drive
+that hook, so for them the plugin falls back to reading the *currently displayed*
+framebuffer (`sceDisplayGetFrameBuf`) and drawing into it from a worker thread,
+synced to vblank. The fallback only touches buffers the display is actively
+scanning (always-mapped VRAM, plus the live buffer) and the draw thread is fully
+stopped before the plugin unloads - so it avoids the fixed-VRAM / background-thread
+crash that sank earlier attempts. `osd_draw_mode` selects between them.
+
+**Logging is deferred, not inline.** With `debug_enable=2`, log lines are pushed
+into a small in-RAM ring from any context (the brightness hook included) and
+flushed to disk by the worker thread - so runtime events are captured without doing
+unsafe file I/O inside a hook.
  
 **No controller or syscon hooks.** An earlier attempt to lock the buttons during a
 manual screen-off seems to cause crashes in some games. 

@@ -34,6 +34,25 @@ static int parse_dim_level(const char *v)
 	return 28;
 }
 
+/* Strict brightness-value validator. A line is a valid brightness ONLY if it is a
+ * non-empty run of decimal digits whose value is 0-100. Anything else (letters,
+ * signs, decimals, out-of-range, junk) is rejected and the caller drops the line -
+ * so a typo in the ini can never become a bad brightness value or crash the plugin.
+ * Returns 1 and fills *out on success, 0 otherwise. */
+static int parse_brightness(const char *s, int *out)
+{
+	int v = 0, i;
+	if(s[0] == '\0') return 0;
+	for(i = 0; s[i]; i++)
+	{
+		if(s[i] < '0' || s[i] > '9') return 0;   /* non-digit -> not a brightness */
+		v = v * 10 + (s[i] - '0');
+		if(v > 100) return 0;                    /* out of range */
+	}
+	if(out) *out = v;
+	return 1;
+}
+
 /* On-disk format for BetterBright.dat. The magic guards against reading a stale or
  * unrelated file written by an older/newer build. */
 #define BRIGHT_MAGIC 0x42523304   /* 'B''R''3', version 4 */
@@ -143,6 +162,10 @@ static int parse_setting(const char *line, BrightSettings *s)
 		s->osd_position = val;
 	else if(klen == 13 && strncmp(line, "osd_draw_mode", 13) == 0)
 		s->osd_draw_mode = val;
+	else if(klen == 13 && strncmp(line, "detect_locale", 13) == 0)
+		s->detect_locale = val;
+	else if(klen == 13 && strncmp(line, "sync_fw_level", 13) == 0)
+		s->sync_fw_level = val;
 
 	return 1;
 }
@@ -167,8 +190,11 @@ int CountItem(char *file)
 	{
 		ReadLine(fd, buffer, 256);
 
-		/* Count only brightness numbers: skip blanks, comments and settings. */
-		if(buffer[0] != '\0' && buffer[0] != '#' && strchr(buffer, '=') == NULL)
+		/* Count only VALID brightness numbers (0-100): skip blanks, comments,
+		 * settings, and any malformed line, so the count matches what ReadItem
+		 * actually stores. */
+		if(buffer[0] != '\0' && buffer[0] != '#' && strchr(buffer, '=') == NULL
+		   && parse_brightness(buffer, (int *)0))
 			count++;
 	}
 
@@ -194,6 +220,8 @@ int ReadItem(const char *file, Bright *buf, BrightSettings *settings)
 		settings->osd_size            = 1;    /* normal */
 		settings->osd_position        = 1;    /* bottom */
 		settings->osd_draw_mode       = 0;    /* auto (hook + poll fallback) */
+		settings->detect_locale       = 1;    /* localise the OSD word */
+		settings->sync_fw_level       = 1;    /* sync firmware level to ours (default on) */
 	}
 
 	SceUID fd = sceIoOpen(file, PSP_O_RDONLY, 0777);
@@ -206,7 +234,11 @@ int ReadItem(const char *file, Bright *buf, BrightSettings *settings)
 		if(buffer[0] == '\0' || buffer[0] == '#') continue;   /* blank / comment */
 		if(parse_setting(buffer, settings))        continue;   /* key=value       */
 
-		buf[count++].level = str_to_int(buffer);                 /* brightness value */
+		{                                                      /* brightness value */
+			int v;
+			if(parse_brightness(buffer, &v)) buf[count++].level = v;  /* valid 0-100 */
+			/* else: malformed line - silently ignored */
+		}
 	}
 
 	sceIoClose(fd);
