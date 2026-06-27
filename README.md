@@ -14,10 +14,9 @@ original idea came from.
 * Remembers brightness state when launching games / rebooting / waking / exiting to XMB
 * Configurable key combo to set brightness level up or down without cycling (the **Display** button still cycles as normal)
 * Option to display the current brightness level (OSD)
-    * Shows in XMB, games and PS1 - with an automatic fallback draw method so it reaches games the normal method can't
-    * The "Brightness" label shows in your system language (including Japanese / Korean / Chinese / Russian)
+    * Shows in XMB, (most) games and PS1 - with an automatic fallback draw method so it reaches games the normal method can't
     * Customise the OSD position, size (1x-4x), background and text colours
-* Optionally keeps the firmware's own backlight level in step with yours
+    * The "Brightness" label shows in your system language
 * Option to choose a custom "dim" level
 * Option to disable display dimming / backlight auto-off ("Power Save")
 * Option to disable console sleep ("Power Save") (use with caution)
@@ -163,11 +162,9 @@ so much of a concern as was 10+ years ago. But still, it is a thing.
 ## Known issues
 
 - **The OSD reaches the vast majority of games now**, including ones the original
-  method couldn't (GTA: LCS, LEGO Batman). If a specific title still hides or
-  flickers the overlay, try `osd_draw_mode=1`. Brightness control itself always
-  works regardless.
-- **OSD colour tints are approximate in some games' framebuffers.** They're exact
-  on the XMB; black and white are always correct everywhere.
+  method couldn't (GTA: LCS, Silent Hill.etc). If a specific title still hides or
+  flickers the overlay, try `osd_draw_mode=1`. Brightness control itself should
+  work regardless.
 - If something external changes the backlight in a way the plugin doesn't catch,
   just press the Display button (or your combo) to re-apply your level.
 
