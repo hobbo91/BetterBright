@@ -15,7 +15,9 @@ original idea came from.
 * Configurable key combo to set brightness level up or down without cycling (the **Display** button still cycles as normal)
 * Option to display the current brightness level (OSD)
     * Shows in XMB, games and PS1 - with an automatic fallback draw method so it reaches games the normal method can't
+    * The "Brightness" label shows in your system language (including Japanese / Korean / Chinese / Russian)
     * Customise the OSD position, size (1x-4x), background and text colours
+* Optionally keeps the firmware's own backlight level in step with yours
 * Option to choose a custom "dim" level
 * Option to disable display dimming / backlight auto-off ("Power Save")
 * Option to disable console sleep ("Power Save") (use with caution)
@@ -116,11 +118,19 @@ after real PSP console finishes:
 **`osd_size`** - text size: `1` = 1x (normal), `2` = 2x, `3` = 3x, `4` = 4x.
 **`osd_position`** - `1` = bottom (default), `2` = top.
 
+**`detect_locale`** - show the OSD "Brightness" word in your system language (`1`,
+default) or always in English (`0`).
+
 **`osd_draw_mode`** - how the OSD is drawn. `0` = auto (default): draw on the frame
 the game presents, and automatically fall back to drawing the live framebuffer for
 games that don't drive that path. `1` = hook only (original method, no fallback).
 `2` = poll only (always draw the live framebuffer). Auto covers virtually every
 game; the other two are escape hatches if a title misbehaves.
+
+**`sync_fw_level`** - keep the firmware's own backlight level (the four stock steps
+the Display button normally cycles) in step with your brightness, rounded up to the
+nearest step. Your actual brightness is unchanged - it just keeps the firmware's
+internal level consistent with yours. `1` = on (default), `0` = off.
 
 **`debug_enable`** - diagnostics, for troubleshooting. `0` = off (default). `1` = an
 on-screen debug line on every brightness event (press/combo/dim/wake/idle) showing
