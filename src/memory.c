@@ -27,9 +27,7 @@ void *memoryAllocEx( const char *name, MemoryPartition partition, unsigned int a
 
 	memory_header header;
 	void *memblock;
-	/* Round size up to the next multiple of MEMORY_PAGE_SIZE.
-	 * Integer math on purpose: the Allegrex has no double FPU, so ceil()/double
-	 * here would drag in soft-float helpers and libm for no reason. */
+	/* round size up to a page (integer math - no FPU on Allegrex) */
 	SceSize real_size = ((size + MEMORY_PAGE_SIZE - 1) / MEMORY_PAGE_SIZE) * MEMORY_PAGE_SIZE;
 	
 	header.blockId	= sceKernelAllocPartitionMemory( partition, name, type, sizeof(memory_header) + real_size + align, addr );

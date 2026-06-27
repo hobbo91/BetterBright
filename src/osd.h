@@ -2,71 +2,46 @@
 #define OSD_H__
 
 /*
- * On-screen brightness display ("Display Brightness: NN").
- *
- * Stable technique: we hook the kernel sceDisplaySetFrameBuf and draw the text
- * straight into the buffer that is about to be shown, every frame. That is why
- * it appears in XMB, games and PS1 alike without flicker - unlike drawing from a
- * background thread, which races whatever is rendering and flickers.
- *
- * When osd_enable is 0 the hook is never installed, so the plugin behaves exactly
- * as if this feature did not exist (zero overhead, zero risk).
+ * On-screen "Brightness: NN" overlay. Drawn in the sceDisplaySetFrameBuf hook, with
+ * a poll-draw thread fallback for games that don't drive it (see osd_set_draw_mode).
+ * When osd_enable=0 nothing is installed.
  */
 
-/* Install the sceDisplaySetFrameBuf hook. Call once at startup, only if enabled.
- * Returns 1 on success, 0 if the function could not be found/patched.
- *
- * Also resolves sceDisplayGetFrameBuf / sceDisplayWaitVblankStart and starts the
- * poll-draw thread (Mode 2). The thread only ever draws when the OSD is visible
- * AND (per draw mode) the in-hook draw isn't reaching the screen - so games that
- * already work via the hook are never touched by it. */
+/* Install the hook + start the poll-draw thread. Once at startup, if enabled.
+ * Returns 1 on success, 0 if the target couldn't be found/patched. */
 int  osd_install(void);
 
-/* Stop the poll-draw thread. Call from module_stop before freeing anything. */
+/* Stop/join the poll-draw thread. Call from module_stop before freeing. */
 void osd_shutdown(void);
 
-/* Select how the overlay reaches the screen. Call once before osd_install().
- *   0 = auto  : draw in the sceDisplaySetFrameBuf hook; if that hook isn't firing
- *               (some games never drive it), fall back to drawing into the live
- *               framebuffer from the poll thread.
- *   1 = hook  : in-hook draw only (the original behaviour, zero poll activity).
- *   2 = poll  : never draw in-hook; always draw into the live framebuffer. */
+/* Draw mode: 0=auto (hook + poll fallback), 1=hook only, 2=poll only. */
 void osd_set_draw_mode(int mode);
 
-/* Show "Display Brightness: <level>" for a short time. Called on each user
- * brightness change. Safe to call from the display hook (no syscalls). */
+/* Show "Brightness: <level>" briefly. Safe from the display hook. */
 void osd_notify(int level);
-void osd_probe(int level, unsigned int unk1);  /* debug: show raw firmware args */
-void osd_note(const char *tag, int level);     /* debug: show "<tag> L=<level>" */
-void osd_debug(const char *event, int level, unsigned int unk1); /* "DEBUG L=.. U=.. event=.." */
+void osd_probe(int level, unsigned int unk1);  /* debug: raw firmware args */
+void osd_note(const char *tag, int level);     /* debug: "<tag> L=<level>" */
+void osd_debug(const char *event, int level, unsigned int unk1); /* DEBUG line */
 void osd_message(const char *s);               /* one-off message (first-run credit) */
 
-/* Which mechanism the OSD is currently reaching the screen through, as a short
- * static string: "api-hook" (drawn in the sceDisplaySetFrameBuf hook) or "fb-poll"
- * (drawn by polling the live framebuffer). Used by the DEBUG overlay line and log. */
+/* Current draw path as a short static string: "api-hook" or "fb-poll". */
 const char *osd_draw_path_name(void);
 
-/* 1 while the OSD timer is counting (overlay on screen), else 0. */
+/* 1 while the overlay is on screen. */
 int osd_is_visible(void);
 
-/* Set OSD colours/size/position from the ini. Call once before osd_install().
- * text_colour/bg_colour: 1=black 2=white 3=red 4=green 5=blue.
- * size: 1=1x 2=2x 3=3x 4=4x (integer, crisp).  position: 1=bottom 2=top. */
+/* Colours (palette index), size 1x..4x, position 1=bottom 2=top. Before install. */
 void osd_set_style(int text_colour, int bg_colour, int size, int position);
 
-/* Localise the "Brightness" word to the system language index (0-11, the
- * PSP_IMPOSE_LANGUAGE / PSP_SYSTEMPARAM_LANGUAGE_* enum). Latin-script languages
- * use the ASCII font; Japanese/Russian/Korean/Chinese use embedded word bitmaps.
- * Call once at startup. */
+/* OSD word language (0-11, PSP_SYSTEMPARAM_LANGUAGE_*); non-Latin use word images. */
 void osd_set_language(int lang);
 
-extern volatile unsigned int osd_last_frame_us; /* time of last drawn frame (µs)   */
+extern volatile unsigned int osd_last_frame_us; /* time of last drawn frame (us) */
 
-/* Tick down the visibility timer. Call once per worker loop (~80 ms). */
+/* Tick the visibility timer (once per worker loop). */
 void osd_tick(void);
 
-/* Dump hook/draw/notify counters + last framebuffer params to the log. Call from
- * the worker thread only (does file I/O when logging is enabled). */
+/* Dump OSD counters to the log (worker context only). */
 void osd_log_status(void);
 
 #endif

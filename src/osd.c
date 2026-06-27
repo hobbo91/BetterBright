@@ -1,42 +1,27 @@
 /*
- * osd.c  -  on-screen "Display Brightness: NN" overlay for BetterBright.
+ * osd.c - on-screen "Brightness: NN" overlay.
  *
- * HOW IT STAYS STABLE
- * -------------------
- * We hijack the kernel sceDisplaySetFrameBuf (sceDisplay_Service / sceDisplay_
- * driver, NID 0x289D82FE). That function is the single point every context -
- * XMB, games, PS1 - funnels through to put a frame on screen. Our hook draws the
- * text into the very buffer being shown and then calls the original. So the
- * overlay is always on the displayed frame, in any context, with no flicker.
- *
- * This is deliberately NOT the approach of the old buggy brightness OSD, which
- * drew from a background thread into whatever GetFrameBuf returned - racing the
- * game's own rendering, hence the flicker/instability.
- *
- * Everything here is pure memory writes (an 8x8 bitmap font straight into VRAM)
- * with no syscalls, so it is safe to run inside the display hook.
+ * Drawn in two ways (osd_draw_mode): the sceDisplaySetFrameBuf hook (draws into the
+ * frame the system is about to show), and a poll-draw fallback thread for games that
+ * don't drive that hook. Pure memory writes (bitmap font into the framebuffer), no
+ * syscalls in the draw path - safe inside the hook.
  */
 
 #include <pspkernel.h>
-#include <module2.h>         /* SceModule2 - the CORRECT firmware module layout  */
-#include <psploadcore.h>     /* SceLibraryEntryTable (entry format is fine)      */
-#include <pspsdk.h>          /* pspSdkDisableInterrupts / EnableInterrupts       */
+#include <module2.h>         /* SceModule2 (CFW module layout)             */
+#include <psploadcore.h>     /* SceLibraryEntryTable                       */
+#include <pspsdk.h>          /* pspSdkDisableInterrupts / EnableInterrupts */
 #include <string.h>
 #include "osd.h"
 #include "log.h"
 #include "version.h"
 
-/* NOTE: we must read the module's export table through SceModule2, not the stock
- * pspsdk SceModule. The CFW firmware struct has two extra words (mpid_text /
- * mpid_data) before ent_top, so pspsdk's SceModule puts ent_top 8 bytes too
- * early and the walk reads garbage - that was the v1 bug (export lookup = 0).
- * SceModule2 is the same struct main.c already uses for text_addr. */
+/* Export tables must be walked via SceModule2 (not pspsdk's SceModule, whose ent_top
+ * is 8 bytes off on CFW). */
 
-/* ---- syscall-table hook (the mechanism the stable PSP-HUD uses) -----------
- * The XMB and every game call sceDisplaySetFrameBuf from USER mode, which enters
- * the kernel through the syscall table. Redirecting the table slot is what
- * catches those callers. cop0 $12 holds a pointer to the running syscall table;
- * this is the same approach PSP-HUD uses. */
+/* ---- syscall-table hook ----
+ * User-mode callers reach sceDisplaySetFrameBuf via the syscall table; redirecting
+ * its slot catches them. cop0 $12 points at the running table. */
 struct sce_syscall_header { void *unk; u32 basenum; u32 topnum; u32 size; };
 
 /* Address of the syscall-table slot that dispatches to kernel function `fn`. */
@@ -59,8 +44,7 @@ static u32 *find_syscall_slot(u32 fn)
 	return 0;
 }
 
-/* Find an export address by module / library / NID, walking the CORRECT
- * SceModule2 export table. */
+/* Find an export address by module / library / NID. */
 static u32 find_export(const char *modname, const char *lib, u32 nid)
 {
 	SceModule2 *mod = (SceModule2 *)sceKernelFindModuleByName(modname);
@@ -82,10 +66,9 @@ static u32 find_export(const char *modname, const char *lib, u32 nid)
 	return 0;
 }
 
-/* ---- instruction-hijack fallback ------------------------------------------
- * If the function isn't reachable as a syscall slot, redirect its entry instead.
- * Saves the first two instructions into a trampoline so the original is still
- * callable. (Used only if the syscall-slot patch can't be applied.) */
+/* ---- instruction-hijack fallback ----
+ * If the syscall-slot patch can't apply, redirect the function entry, saving the
+ * first two instructions into a trampoline so the original stays callable. */
 #define MAKE_JUMP(a, f)  _sw(0x08000000 | (((u32)(f) >> 2) & 0x03FFFFFF), (a))
 static u32 g_tramp[3];
 
@@ -100,9 +83,8 @@ static void *hijack_install(u32 addr, void *newf)
 }
 
 
-/* 8x8, 1bpp bitmap font (MSB = leftmost column), one glyph = 8 bytes, indexed by
- * char code. This is the public-domain pspsdk debug font, embedded (renamed) so
- * the plugin has no dependency on -lpspdebug's data. */
+/* 8x8 1bpp bitmap font (MSB = leftmost col, 8 bytes/glyph), the public-domain
+ * pspsdk debug font embedded so we don't depend on -lpspdebug. */
 static const u8 bb_font[] =
 "\x00\x00\x00\x00\x00\x00\x00\x00\x3c\x42\xa5\x81\xa5\x99\x42\x3c"
 "\x3c\x7e\xdb\xff\xff\xdb\x66\x3c\x6c\xfe\xfe\xfe\x7c\x38\x10\x00"
@@ -233,67 +215,40 @@ static const u8 bb_font[] =
 "\xa0\x50\x50\x50\x00\x00\x00\x00\x40\xa0\x20\x40\xe0\x00\x00\x00"
 "\x00\x38\x38\x38\x38\x38\x38\x00\x00\x00\x00\x00\x00\x00\x00";
 
-/* ---- overlay state ---------------------------------------------------------*/
+/* ---- overlay state ---- */
 #define SCR_W      480
 #define SCR_H      272
 #define GLYPH      8              /* font cell size                            */
-#define ADVANCE    7              /* horizontal step per character             */
-#define OSD_TICKS  32             /* worker loops (~80 ms each) ~= 2.5 s        */
+#define ADVANCE    6              /* per-char step (glyphs are 5px -> 1px gap)  */
+#define COLON_KERN  2             /* pull ':' left to hug the prev char         */
+#define OSD_TICKS  32             /* ~2.5 s (worker loops, ~80 ms each)         */
 #define OSD_MSG_TICKS 63          /* one-off messages: ~5 s                      */
 
-static char osd_text[80];   /* must hold the DEBUG line: "BB <ver> DEBUG: L=.. U=.. event=.. draw=.." */
+static char osd_text[80];               /* holds the 2-line DEBUG string */
 static volatile int osd_ticks = 0;
-static volatile int osd_lock  = 0;      /* >0: a locked message owns the OSD, no overwrite */
-static void *orig_setframebuf = NULL;   /* the real SetFrameBuf (called directly) */
+static volatile int osd_lock  = 0;      /* >0: a locked message owns the OSD */
+static void *orig_setframebuf = NULL;   /* the real SetFrameBuf */
 
-/* ---- Mode 2 (poll-draw) state ---------------------------------------------
- * Some games never drive the sceDisplaySetFrameBuf slot we hook, so the in-hook
- * draw (Mode 1) never runs for them and the OSD is absent. The fallback, used by
- * the stable PSP-HUD plugin, is to ask the display service what is CURRENTLY on
- * screen (sceDisplayGetFrameBuf - returns the live buffer regardless of who set
- * it) and draw straight into it from a thread, synced to vblank. We reuse the
- * exact same draw16/draw32 routines, the real pixelformat/stride from the driver,
- * and the real buffer address - i.e. none of the hardcoded-VRAM / fixed-8888 /
- * no-vblank mistakes that crashed the old "Brightness-Control" reference plugin. */
+/* ---- poll-draw (fallback) state ----
+ * For games that don't drive the hook: read the live framebuffer (GetFrameBuf) and
+ * draw into it from a thread, synced to vblank. */
 static int (*p_getframebuf)(void **topaddr, int *bufwidth, int *pixfmt, int sync) = NULL;
 static int (*p_waitvblankstart)(void) = NULL;
 
-/* 0 = auto (hook, poll only when the hook is idle), 1 = hook only, 2 = poll only */
-static int osd_draw_mode = 0;
+static int osd_draw_mode = 0;           /* 0=auto 1=hook-only 2=poll-only */
 
-/* osd_last_frame_us (below) is "something drew a frame" and is bumped by BOTH the
- * hook and the poll path, so the visibility timer counts down in either mode.
- * osd_last_hook_us is bumped ONLY by the hook, so auto-mode can tell whether the
- * in-hook draw is actually reaching the screen for the current game. */
+/* bumped by hook AND poll (drives the visibility timer) vs hook-only (auto test). */
 static volatile unsigned int osd_last_hook_us = 0;
-
-/* Cheap mutual exclusion so the hook and the poll thread never paint at once.
- * A stray race is only ever visual (both paths are bounds-checked), never a
- * crash - mirrors PSP-HUD's single 'wait' flag. */
-static volatile int osd_painting = 0;
-
-/* Poll-draw thread lifecycle. */
-static volatile int osd_draw_run = 0;
+static volatile int osd_painting = 0;   /* hook/poll mutual exclusion (visual only) */
+static volatile int osd_draw_run = 0;   /* poll-draw thread run flag */
 static SceUID osd_draw_thid = -1;
 
-/* ---- flip-chain framebuffer set -------------------------------------------
- * Games double/triple-buffer: they cycle the displayed frame between 2-3 buffers.
- * If we paint only the one buffer GetFrameBuf hands back, the frames showing the
- * OTHER buffer have no text -> fast flicker. So we remember the recently-seen
- * distinct framebuffer addresses (fed by BOTH the hook and the poll) and stamp the
- * text into ALL of them each pass; whichever buffer is shown next already has it.
- *
- * STABILITY: writing to a stale framebuffer pointer is the one real risk here, so
- * the cache is guarded four ways - entries expire fast (a freed buffer stops being
- * re-seen and ages out), the whole set is dropped the moment bufferwidth/format
- * changes (that's when a game reallocates buffers), only VRAM addresses are ever
- * cached (VRAM is fixed hardware memory, always mapped - a stale write there is a
- * one-frame glitch, never a fault), and the thread is fully joined before unload.
- *
- * The buffer GetFrameBuf returns "live" each pass is a separate matter: it's the
- * one the display is actively scanning, so it's ALWAYS mapped (even RAM ones, even
- * mid-teardown) and is painted directly - that's how RAM-framebuffer games like
- * Lego Batman get covered without putting a RAM pointer in the cache. */
+/* ---- flip-chain framebuffer set ----
+ * Double/triple-buffered games cycle 2-3 buffers; painting only the live one
+ * flickers. Cache recently-seen distinct buffers and paint them all each pass.
+ * Cache is VRAM-only (always mapped; stale write = 1-frame glitch, not a fault),
+ * dropped on geometry change, and expired fast. RAM framebuffers are covered by the
+ * live in-hook paint instead, never cached. */
 #define FB_MAX 4
 #define FB_EXPIRE_US 200000u            /* drop an address not re-seen for 200 ms */
 static volatile u32 fb_addr[FB_MAX];
@@ -301,17 +256,10 @@ static volatile unsigned int fb_seen[FB_MAX];
 static volatile int fb_bw = 0;
 static volatile int fb_pf = -1;
 
-/* Normalise to the cached base address (strip the 0x40000000 uncached bit) so the
- * same buffer seen cached/uncached dedupes to one entry. */
+/* strip the 0x40000000 uncached bit so cached/uncached dedupe to one entry */
 static u32 fb_norm(u32 a) { return a & 0x0FFFFFFFu; }
 
-/* Accept only VRAM addresses (the 2 MB eDRAM at 0x04000000..0x04200000) into the
- * async flip-chain set. VRAM is fixed hardware memory - always mapped - so even a
- * stale write is a harmless one-frame glitch, never a fault. Main-RAM framebuffers
- * are deliberately excluded: they're the ones a game frees on exit, and chasing a
- * freed RAM pointer from the poll thread is what reboots the PSP. A live RAM buffer
- * is still covered by the synchronous in-hook draw, which only ever runs on the
- * exact frame the game itself is presenting (so it can't be stale). */
+/* VRAM only (2 MB eDRAM); see flip-chain note above. */
 static int fb_plausible(u32 a)
 {
 	a = fb_norm(a);
@@ -325,15 +273,15 @@ static void fb_register(u32 top, int bw, int pf, unsigned int now)
 	if(bw <= 0 || pf < 0 || pf > 3 || !fb_plausible(top)) return;
 	top = fb_norm(top);
 
-	if(bw != fb_bw || pf != fb_pf)          /* geometry changed -> drop the old set */
+	if(bw != fb_bw || pf != fb_pf)          /* geometry changed -> drop the set */
 	{
 		for(i = 0; i < FB_MAX; i++) { fb_addr[i] = 0; fb_seen[i] = 0; }
 		fb_bw = bw; fb_pf = pf;
 	}
-	for(i = 0; i < FB_MAX; i++)              /* already known -> refresh timestamp   */
+	for(i = 0; i < FB_MAX; i++)              /* known -> refresh timestamp */
 		if(fb_addr[i] == top) { fb_seen[i] = now; return; }
 
-	slot = 0;                                /* else take an empty or the oldest slot */
+	slot = 0;                                /* else empty/oldest slot */
 	for(i = 0; i < FB_MAX; i++)
 	{
 		if(fb_addr[i] == 0) { slot = i; break; }
@@ -353,13 +301,11 @@ static volatile int osd_last_pf      = -1;  /* last pixelformat                 
 static volatile int osd_last_sync    = -1;  /* last sync mode (0=immediate,1=next)*/
 
 
-/* The word "Brightness" per system-language index (PSP_IMPOSE_LANGUAGE / the
- * PSP_SYSTEMPARAM_LANGUAGE_* enum), for the LATIN-script languages drawn with the
- * ASCII font (accents dropped: FR Luminosite, IT Luminosita). The non-Latin
- * languages (Japanese, Russian, Korean, Chinese) are drawn from word images instead
- * (see osd_word[]); their entries here are just a never-hit English safety net. */
+/* "Brightness" per language index (PSP_SYSTEMPARAM_LANGUAGE_*), for the Latin
+ * languages drawn with the ASCII font (accents dropped). Non-Latin languages use
+ * word images (osd_word[]); their entries here are an unused English fallback. */
 static const char *const bright_word[] = {
-	"Brightness",   /*  0 Japanese  -> EN fallback (no kana/kanji glyphs) */
+	"Brightness",   /*  0 Japanese (image) */
 	"Brightness",   /*  1 English   */
 	"Luminosite",   /*  2 French    */
 	"Brillo",       /*  3 Spanish   */
@@ -367,10 +313,10 @@ static const char *const bright_word[] = {
 	"Luminosita",   /*  5 Italian   */
 	"Helderheid",   /*  6 Dutch     */
 	"Brilho",       /*  7 Portuguese*/
-	"Brightness",   /*  8 Russian   -> EN fallback (no Cyrillic glyphs)   */
-	"Brightness",   /*  9 Korean    -> EN fallback (no Hangul glyphs)     */
-	"Brightness",   /* 10 Chinese (T) -> EN fallback                      */
-	"Brightness",   /* 11 Chinese (S) -> EN fallback                      */
+	"Brightness",   /*  8 Russian (image) */
+	"Brightness",   /*  9 Korean  (image) */
+	"Brightness",   /* 10 Chinese T (image) */
+	"Brightness",   /* 11 Chinese S (image) */
 };
 #define OSD_NLANGS ((int)(sizeof(bright_word) / sizeof(bright_word[0])))
 
@@ -381,11 +327,9 @@ void osd_set_language(int lang)
 	osd_lang = (lang >= 0 && lang < OSD_NLANGS) ? lang : 1;   /* else English */
 }
 
-/* ---- non-Latin "Brightness" word images ----------------------------------
- * The 8x8 font is Latin-only, so for Japanese/Russian/Korean/Chinese the word is a
- * pre-rendered 1bpp bitmap (11px tall, MSB-first, row-major), blitted then scaled
- * exactly like the font. Generated from the macOS system fonts; the number after
- * it is still the ASCII font. */
+/* ---- non-Latin "Brightness" word images ----
+ * Pre-rendered 1bpp bitmaps (11px tall, MSB-first, row-major) for the scripts the
+ * font can't draw; blitted and scaled like the font, with the number after. */
 #define OSD_WORD_H 11
 typedef struct { int w, rowbytes; const unsigned char *bits; } OsdWord;
 
@@ -414,54 +358,49 @@ static const OsdWord osd_word[OSD_NLANGS] = {
 	{ 24, 3, word_zh_bits },   /* 11 Chinese S */
 };
 
-/* When set, osd_draw blits this word image before the text (the text is just the
- * ": NN" part). NULL = pure-ASCII osd_text. Reset by every other text setter. */
+/* Set = blit this word image before osd_text (which is then just ":NN"). NULL =
+ * pure-ASCII osd_text. Reset by every other text setter. */
 static const OsdWord *osd_word_cur = 0;
 
-/* Append ": <level>" to p. */
-static char *osd_put_level(char *p, int level)
+/* Append the level digits to p. */
+static char *osd_put_num(char *p, int level)
 {
 	if(level < 0)   level = 0;
 	if(level > 100) level = 100;
-	*p++ = ':'; *p++ = ' ';
 	if(level >= 100)     { *p++ = '1'; *p++ = '0'; *p++ = '0'; }
 	else if(level >= 10) { *p++ = (char)('0' + level / 10); *p++ = (char)('0' + level % 10); }
 	else                 { *p++ = (char)('0' + level); }
 	return p;
 }
 
-/* Build "<Brightness>: <level>" and show it for OSD_TICKS worker loops. For Latin
- * languages the word is ASCII text; for the others it's a word image (osd_word_cur)
- * and osd_text holds only the ": NN". Pure memory work - safe in the display hook. */
+/* Show "<Brightness>:<level>". Latin word is ASCII; others use a word image and
+ * osd_text holds only ":NN". Pure memory - safe in the display hook. */
 void osd_notify(int level)
 {
 	const OsdWord *wd = &osd_word[osd_lang];
 	char *p = osd_text;
 
-	if(osd_lock > 0) return;             /* a locked message owns the OSD */
+	if(osd_lock > 0) return;
 
-	if(wd->bits)                         /* non-Latin: image + ": NN" */
+	if(wd->bits)                         /* non-Latin: image + ":NN" */
 	{
 		osd_word_cur = wd;
-		p = osd_put_level(p, level);
 	}
-	else                                 /* Latin: "<word>: NN" all ASCII */
+	else                                 /* Latin: "<word>:NN" */
 	{
 		const char *w = bright_word[osd_lang];
 		osd_word_cur = 0;
 		while(*w) *p++ = *w++;
-		p = osd_put_level(p, level);
 	}
+	*p++ = ':';
+	p = osd_put_num(p, level);
 	*p = 0;
 
 	osd_ticks = OSD_TICKS;
 	osd_notify_calls++;
 }
 
-/* Probe (debug build): show the raw (level, unk1) the firmware passes into the
- * brightness patch, so a genuine Display press and a wake-from-dim can be
- * compared on-screen. level as signed decimal, unk1 as hex (it's unknown, so
- * show every bit). Output e.g. "L=80 U=0x00000000". */
+/* Debug: show raw patch args, "L=<dec> U=0x<hex>". */
 void osd_probe(int level, unsigned int unk1)
 {
 	static const char hexd[] = "0123456789ABCDEF";
@@ -517,18 +456,10 @@ void osd_note(const char *tag, int level)
 	osd_notify_calls++;
 }
 
-/* In auto mode, the hook is "live" (driving this game) if it fired this recently;
- * otherwise the poll thread is what's reaching the screen. */
-#define OSD_HOOK_LIVE_US 200000u   /* 200 ms */
+#define OSD_HOOK_LIVE_US 200000u   /* hook counts as "live" if it fired within 200 ms */
 
-/* Reports the mechanism ACTUALLY putting the overlay on screen right now, named for
- * what it does (not the configured mode, and without the "auto" wrapper):
- *   "api-hook" - drawn inside the hooked sceDisplaySetFrameBuf call, i.e. straight
- *                onto the frame the game itself is presenting via the display API.
- *   "fb-poll"  - drawn by the worker polling sceDisplayGetFrameBuf and writing the
- *                live framebuffer(s) directly (used when the game isn't driving the
- *                SetFrameBuf hook).
- * In auto mode it switches between the two live, per whether the hook is firing. */
+/* Which path is on screen now: "api-hook" (in the SetFrameBuf hook) or "fb-poll"
+ * (poll thread into the live buffer). In auto, picks per whether the hook is live. */
 const char *osd_draw_path_name(void)
 {
 	if(osd_draw_mode == 1) return "api-hook";
@@ -541,7 +472,7 @@ const char *osd_draw_path_name(void)
 
 int osd_is_visible(void){ return osd_ticks > 0; }
 
-/* tiny unsigned/signed decimal appender for the debug line */
+/* signed decimal appender */
 static char *osd_put_dec(char *p, int v)
 {
 	unsigned int u;
@@ -554,13 +485,8 @@ static char *osd_put_dec(char *p, int v)
 }
 static char *osd_put_str(char *p, const char *s){ while(*s) *p++ = *s++; return p; }
 
-/* DEBUG overlay, drawn over TWO lines (a '\n' splits them) so it still fits at the
- * larger osd_size settings:
- *   line 1: "BB <ver> DEBUG: L=<fw> U=<plugin>"
- *   line 2: "event=<tag> draw=<how>"
- * L = firmware/native backlight step (44/60/72/84), U = our actual brightness,
- * draw = how it's drawn right now ("api-hook" or "fb-poll", see osd_draw_path_name).
- * Fires on every trigger (press / dim / wake / idle). */
+/* Two-line DEBUG overlay (split on '\n' so it fits at larger sizes):
+ *   "BB <ver> DEBUG: L=<fw> U=<level>" / "event=<tag> draw=<path>". */
 void osd_debug(const char *event, int level, unsigned int unk1)
 {
 	char *p = osd_text;
@@ -573,7 +499,7 @@ void osd_debug(const char *event, int level, unsigned int unk1)
 	p = osd_put_dec(p, level);
 	p = osd_put_str(p, " U=");
 	p = osd_put_dec(p, (int)unk1);
-	*p++ = '\n';                                  /* -> line 2 */
+	*p++ = '\n';                                  /* line 2 */
 	p = osd_put_str(p, "event=");
 	while(event[i] && i < 12) { *p++ = event[i]; i++; }
 	p = osd_put_str(p, " draw=");
@@ -584,9 +510,7 @@ void osd_debug(const char *event, int level, unsigned int unk1)
 	osd_notify_calls++;
 }
 
-/* Show an arbitrary one-off message (e.g. the first-run credit) for ~3 s and
- * LOCK the OSD for that time, so a brightness change or debug line can't paint
- * over it. */
+/* One-off message (e.g. first-run credit); locks the OSD so nothing overwrites it. */
 void osd_message(const char *s)
 {
 	char *p = osd_text;
@@ -602,12 +526,11 @@ void osd_message(const char *s)
 
 void osd_tick(void)
 {
-	/* Only count down while the screen is actually drawing frames. A message put
-	 * up before the XMB starts rendering (e.g. the first-run credit) then keeps
-	 * its full visible duration instead of expiring during the blank early boot. */
+	/* Only count down while frames are actually drawing (so a message shown before
+	 * the XMB renders keeps its full duration). */
 	static unsigned int prev_frame = 0;
 	unsigned int f = osd_last_frame_us;
-	if(f == prev_frame) return;     /* no new frame since last tick -> hold */
+	if(f == prev_frame) return;     /* no new frame -> hold */
 	prev_frame = f;
 	if(osd_ticks > 0) osd_ticks--;
 	if(osd_lock  > 0) osd_lock--;
@@ -626,17 +549,13 @@ void osd_log_status(void)
 	log_kv("osd.last_sync",    osd_last_sync);
 }
 
-/* ---- OSD style (set once from the ini before the hook is installed) -------- */
-/* Integer text scale only - each font pixel becomes a uniform sc x sc block, so
- * every size stays pixel-crisp. 1=1x 2=2x 3=3x 4=4x. */
-static int osd_scale  = 1;   /* integer multiplier (1 = normal)                 */
+/* ---- OSD style (set from the ini before install) ---- */
+static int osd_scale  = 1;   /* integer multiplier 1x..4x (pixel-crisp)         */
 static int osd_pos    = 1;   /* 1 = bottom, 2 = top                            */
 static int osd_fg_idx = 2;   /* text colour index (white)                      */
 static int osd_bg_idx = 1;   /* plate colour index (black)                     */
 
-/* PSP-console-themed palette, RGB888. col32/col16 convert to the live pixel
- * format, so adding a colour here is the only change needed. Order is the .ini
- * numbering; 1/2/8/9 reproduce the old black/white/red/blue exactly. */
+/* PSP-themed palette, RGB888 (the .ini colour numbering). col32/col16 convert it. */
 static const unsigned char osd_pal[][3] = {
 	{   0,   0,   0 },   /*  1 piano black    */
 	{ 255, 255, 255 },   /*  2 ceramic white  */
@@ -667,7 +586,7 @@ void osd_set_style(int text_colour, int bg_colour, int size, int position)
 	osd_pos   = (position == 2) ? 2 : 1;
 }
 
-/* colour index -> 32bpp ABGR8888 (the XMB format). Exact. */
+/* colour index -> 32bpp ABGR8888 (exact). */
 static u32 col32(int idx)
 {
 	const unsigned char *c;
@@ -676,10 +595,7 @@ static u32 col32(int idx)
 	return 0xFF000000u | ((u32)c[2] << 16) | ((u32)c[1] << 8) | (u32)c[0];
 }
 
-/* colour index -> 16bpp for the given game pixelformat. Converted from the same
- * RGB table; black/white stay exact, the tints assume the PSP's usual ABGR bit
- * order (R in the low bits) and are best-effort - they may read slightly off in
- * some games' framebuffers, which is why colour is documented as a stretch. */
+/* colour index -> 16bpp for the pixelformat. Black/white exact; tints best-effort. */
 static u16 col16(int idx, int pf)
 {
 	const unsigned char *c;
@@ -698,11 +614,10 @@ static u16 col16(int idx, int pf)
 	return (idx == 1) ? 0x0000 : 0xFFFF;
 }
 
-/* The overlay text can contain '\n' to span multiple lines (the DEBUG view uses
- * two). Up to this many lines are laid out; extra '\n's are ignored. */
+/* osd_text may contain '\n' (the DEBUG view uses 2 lines). */
 #define OSD_MAXLINES 3
 
-/* ---- plate fill (one rectangle behind all the text) ----------------------- */
+/* ---- plate fill ---- */
 static void fill_plate16(u16 *fb, int stride, int x, int y, int w, int h, u16 bg)
 {
 	int bx, by;
@@ -730,16 +645,33 @@ static void fill_plate32(u32 *fb, int stride, int x, int y, int w, int h, u32 bg
 	}
 }
 
-/* ---- one line of glyphs (no plate) ---------------------------------------- */
-/* sc is an integer multiplier, so each font pixel becomes a uniform sc x sc block
- * (pixel-crisp). text/len is the line to draw (a slice of osd_text). */
+/* ---- line layout ----
+ * A non-leading ':' is kerned left (and its advance shortened) so it hugs the
+ * previous letter; a leading ':' (after a word image) is left alone. */
+static int char_advance(const char *text, int i, int sc)
+{
+	return (text[i] == ':' && i > 0) ? (ADVANCE - COLON_KERN) * sc : ADVANCE * sc;
+}
+static int char_kern(const char *text, int i, int sc)
+{
+	return (text[i] == ':' && i > 0) ? COLON_KERN * sc : 0;
+}
+/* Pixel width of a line. */
+static int line_w(const char *text, int len, int sc)
+{
+	int i, w = 0;
+	for(i = 0; i < len; i++) w += char_advance(text, i, sc);
+	return w;
+}
+
+/* ---- one line of glyphs (no plate), each pixel an sc x sc block ---- */
 static void draw_line16(u16 *fb, int stride, int x0, int y0, const char *text, int len, u16 fg, int sc)
 {
-	int adv = ADVANCE * sc, ci, r, c, sx, sy;
+	int ci, r, c, sx, sy, x = x0;
 	for(ci = 0; ci < len; ci++)
 	{
 		const u8 *g = &bb_font[((u8)text[ci]) * 8];
-		int gx = x0 + ci * adv;
+		int gx = x - char_kern(text, ci, sc);
 		for(r = 0; r < 8; r++)
 		{
 			u8 row = g[r];
@@ -759,15 +691,16 @@ static void draw_line16(u16 *fb, int stride, int x0, int y0, const char *text, i
 				}
 			}
 		}
+		x += char_advance(text, ci, sc);
 	}
 }
 static void draw_line32(u32 *fb, int stride, int x0, int y0, const char *text, int len, u32 fg, int sc)
 {
-	int adv = ADVANCE * sc, ci, r, c, sx, sy;
+	int ci, r, c, sx, sy, x = x0;
 	for(ci = 0; ci < len; ci++)
 	{
 		const u8 *g = &bb_font[((u8)text[ci]) * 8];
-		int gx = x0 + ci * adv;
+		int gx = x - char_kern(text, ci, sc);
 		for(r = 0; r < 8; r++)
 		{
 			u8 row = g[r];
@@ -787,10 +720,11 @@ static void draw_line32(u32 *fb, int stride, int x0, int y0, const char *text, i
 				}
 			}
 		}
+		x += char_advance(text, ci, sc);
 	}
 }
 
-/* ---- one word image (no plate), scaled sc x like the font ----------------- */
+/* ---- one word image (no plate), scaled sc x ---- */
 static void blit_word16(u16 *fb, int stride, int x0, int y0, const OsdWord *wd, u16 fg, int sc)
 {
 	int r, c, sx, sy;
@@ -838,38 +772,34 @@ static void blit_word32(u32 *fb, int stride, int x0, int y0, const OsdWord *wd, 
 	}
 }
 
-/* Draw the overlay into the buffer that is about to be displayed. Splits osd_text
- * on '\n' into lines, draws one plate behind them all, then each line centred. When
- * osd_word_cur is set (non-Latin "Brightness"), a word image is blitted before the
- * single line of text (the ": NN"), baseline-aligned. */
+/* Draw the overlay: one plate, lines centred (split on '\n'). When osd_word_cur is
+ * set, blit the word image before the ":NN" text (baseline-aligned). */
 static void osd_draw(void *topaddr, int bufferwidth, int pixelformat)
 {
-	int sc, gh, adv, gap, nlines, i;
+	int sc, gh, gap, nlines, i;
 	int lstart[OSD_MAXLINES], llen[OSD_MAXLINES];
-	int maxlen, maxw, total_h, plate_x, plate_y, y, k, s;
+	int maxw, total_h, plate_x, plate_y, y, k, s;
 	void *fb;
 
 	if(!topaddr || bufferwidth <= 0 || osd_text[0] == 0) return;
 
 	sc  = osd_scale;
 	gh  = GLYPH * sc;
-	adv = ADVANCE * sc;
 	gap = 2 * sc;                          /* blank rows between lines */
 
-	/* uncached mirror so the display sees the writes without a cache flush */
-	fb = (void *)(((u32)topaddr) | 0x40000000);
+	fb = (void *)(((u32)topaddr) | 0x40000000);   /* uncached mirror (no cache flush) */
 
-	/* ---- non-Latin: [word image][": NN"] on one line ---------------------- */
+	/* ---- non-Latin: [word image][":NN"] ---- */
 	if(osd_word_cur)
 	{
 		const OsdWord *wd = osd_word_cur;
 		int imgW = wd->w * sc, imgH = OSD_WORD_H * sc;
 		int tlen = 0; while(osd_text[tlen]) tlen++;
-		int textW = tlen * adv;
+		int textW = line_w(osd_text, tlen, sc);
 		int lineW = imgW + textW;
 		int px = (SCR_W - lineW) / 2; if(px < 0) px = 0;
 		int py = (osd_pos == 2) ? 8 : (SCR_H - imgH - 6);
-		int ty = py + (imgH - gh);          /* baseline-align the number to the word */
+		int ty = py + (imgH - gh);          /* baseline-align number to word */
 
 		if(pixelformat == 3)
 		{
@@ -888,7 +818,7 @@ static void osd_draw(void *topaddr, int bufferwidth, int pixelformat)
 		return;
 	}
 
-	/* split osd_text into lines on '\n' */
+	/* split into lines on '\n' */
 	nlines = 0; s = 0;
 	for(k = 0; ; k++)
 	{
@@ -902,9 +832,12 @@ static void osd_draw(void *topaddr, int bufferwidth, int pixelformat)
 	}
 	if(nlines == 0) return;
 
-	maxlen = 0;
-	for(i = 0; i < nlines; i++) if(llen[i] > maxlen) maxlen = llen[i];
-	maxw    = maxlen * adv;
+	maxw = 0;
+	for(i = 0; i < nlines; i++)
+	{
+		int lw = line_w(&osd_text[lstart[i]], llen[i], sc);
+		if(lw > maxw) maxw = lw;
+	}
 	total_h = nlines * gh + (nlines - 1) * gap;
 	plate_x = (SCR_W - maxw) / 2; if(plate_x < 0) plate_x = 0;
 	plate_y = (osd_pos == 2) ? 8 : (SCR_H - total_h - 6);   /* top : bottom */
@@ -916,7 +849,7 @@ static void osd_draw(void *topaddr, int bufferwidth, int pixelformat)
 		y = plate_y;
 		for(i = 0; i < nlines; i++)
 		{
-			int lx = (SCR_W - llen[i] * adv) / 2; if(lx < 0) lx = 0;
+			int lx = (SCR_W - line_w(&osd_text[lstart[i]], llen[i], sc)) / 2; if(lx < 0) lx = 0;
 			draw_line32((u32 *)fb, bufferwidth, lx, y, &osd_text[lstart[i]], llen[i], fg, sc);
 			y += gh + gap;
 		}
@@ -928,7 +861,7 @@ static void osd_draw(void *topaddr, int bufferwidth, int pixelformat)
 		y = plate_y;
 		for(i = 0; i < nlines; i++)
 		{
-			int lx = (SCR_W - llen[i] * adv) / 2; if(lx < 0) lx = 0;
+			int lx = (SCR_W - line_w(&osd_text[lstart[i]], llen[i], sc)) / 2; if(lx < 0) lx = 0;
 			draw_line16((u16 *)fb, bufferwidth, lx, y, &osd_text[lstart[i]], llen[i], fg, sc);
 			y += gh + gap;
 		}
@@ -936,26 +869,21 @@ static void osd_draw(void *topaddr, int bufferwidth, int pixelformat)
 	/* any other format: leave the frame untouched */
 }
 
-/* Our replacement for sceDisplaySetFrameBuf: draw, then chain to the original.
- * No file I/O here - only cheap counter updates the worker later logs. */
+/* Our SetFrameBuf hook: draw, then chain to the original. No file I/O here. */
 static int osd_set_frame_buf(void *topaddr, int bufferwidth, int pixelformat, int sync)
 {
 	unsigned int now = sceKernelGetSystemTimeLow();
 	osd_hook_calls++;
-	osd_last_hook_us  = now;       /* hook-only heartbeat (auto-mode fallback test) */
-	osd_last_frame_us = now;       /* "screen is drawing" heartbeat (drives osd_tick) */
+	osd_last_hook_us  = now;       /* hook-only heartbeat (auto-mode test) */
+	osd_last_frame_us = now;       /* drives osd_tick */
 	osd_last_top = (u32)topaddr;
 	osd_last_bw  = bufferwidth;
 	osd_last_pf  = pixelformat;
 	osd_last_sync = sync;
 
-	/* This buffer is part of the game's flip chain - remember it so the poll path
-	 * (and the line below) can keep every buffer stamped, not just the live one. */
-	fb_register((u32)topaddr, bufferwidth, pixelformat, now);
+	fb_register((u32)topaddr, bufferwidth, pixelformat, now);   /* remember flip-chain buffer */
 
-	/* Mode 1 (hook) or Mode 0 (auto) draw in-hook here. Mode 2 (poll only) leaves
-	 * the frame to the poll thread. The paint guard keeps us off a frame the poll
-	 * thread is mid-write on (it draws into the live buffer, which may be this one). */
+	/* Draw in-hook unless poll-only mode; guard against the poll thread. */
 	if(osd_ticks > 0 && osd_draw_mode != 2 && !osd_painting)
 	{
 		osd_painting = 1;
@@ -968,15 +896,13 @@ static int osd_set_frame_buf(void *topaddr, int bufferwidth, int pixelformat, in
 	       (topaddr, bufferwidth, pixelformat, sync);
 }
 
-/* One paint pass: the live buffer (any region - it's the one the display is
- * scanning, so always mapped) plus every still-fresh CACHED buffer (VRAM only).
- * Painting the live buffer directly is what covers RAM-framebuffer games. */
+/* One paint pass: the live buffer (always mapped) + the cached VRAM flip-chain. */
 static void osd_paint_pass(void *top, int bw, int pf, unsigned int now)
 {
 	int i;
 	osd_painting = 1;
 	if(top && bw > 0) osd_draw(top, bw, pf);          /* live buffer (RAM or VRAM) */
-	if(fb_bw > 0 && fb_pf >= 0)                        /* extra flip-chain buffers  */
+	if(fb_bw > 0 && fb_pf >= 0)                        /* cached extra buffers */
 		for(i = 0; i < FB_MAX; i++)
 		{
 			u32 a = fb_addr[i];
@@ -996,15 +922,10 @@ static void *osd_live_buf(int *bw, int *pf)
 	return top;
 }
 
-/* Mid-frame gap for the second paint: roughly half a 60 fps frame, so we catch a
- * game that flips or re-renders the front buffer partway through the frame. */
-#define HALF_FRAME_US 8000
+#define HALF_FRAME_US 8000   /* mid-frame gap for the 2nd paint (~half a 60fps frame) */
 
-/* ---- Mode 2: poll-draw into the live framebuffer(s) ------------------------
- * Twice per frame (at vblank, then mid-frame) stamp the OSD into the live buffer
- * and the cached VRAM flip-chain. The vblank-synced first paint plus the mid-frame
- * second paint together beat the every-other-frame flicker on double/triple-
- * buffered games. Draw-thread context only (k1 handling is in osd_live_buf). */
+/* Poll-draw: paint at vblank, then again mid-frame, to beat double-buffer flicker.
+ * Draw-thread only. */
 static void osd_draw_poll(void)
 {
 	void *top;
@@ -1016,24 +937,21 @@ static void osd_draw_poll(void)
 	if(osd_painting) return;                 /* hook is mid-paint - skip this pass */
 
 	k1 = pspSdkSetK1(0);
-	if(p_waitvblankstart) p_waitvblankstart();   /* align paint #1 to blanking */
+	if(p_waitvblankstart) p_waitvblankstart();   /* align paint #1 to vblank */
 	pspSdkSetK1(k1);
 
-	/* Bail before touching ANY buffer if a shutdown began while we were parked in
-	 * the vblank wait - quitting a game tears the framebuffers down underneath us,
-	 * and one stray paint into freed memory is a reboot. Load-bearing for the
-	 * "OSD up when you quit" crash; re-checked again before paint #2. */
+	/* Bail before any paint if a shutdown began during the vblank wait - quitting
+	 * tears the buffers down and a stray write would reboot. (Re-checked before #2.) */
 	if(!osd_draw_run || osd_ticks <= 0) return;
 
 	top = osd_live_buf(&bw, &pf);
 	now = sceKernelGetSystemTimeLow();
 	if(top && bw > 0) fb_register((u32)top, bw, pf, now);
-	osd_paint_pass(top, bw, pf, now);             /* paint #1 (at vblank) */
+	osd_paint_pass(top, bw, pf, now);             /* paint #1 */
 	osd_last_frame_us = now;
 	osd_draw_calls++;
 
-	/* paint #2, partway through the frame, to re-stamp a buffer the game flipped to
-	 * or re-rendered since the vblank paint. */
+	/* paint #2 mid-frame (catch a flip/re-render since the vblank paint) */
 	sceKernelDelayThread(HALF_FRAME_US);
 	if(!osd_draw_run || osd_ticks <= 0) return;
 	top = osd_live_buf(&bw, &pf);
@@ -1042,13 +960,8 @@ static void osd_draw_poll(void)
 	osd_paint_pass(top, bw, pf, now);
 }
 
-/* Background draw thread. Idle (30 ms naps) until the OSD is visible, then (unless
- * forced to hook-only) stamps the flip-chain buffers every vblank. In auto mode
- * this runs alongside the in-hook draw - painting the whole buffer set is what
- * stops the every-other-frame flicker on double/triple-buffered games, and it's
- * harmless on games the hook already covers (those buffers just get the same text
- * twice). WaitVblankStart inside osd_draw_poll paces it to ~once per frame, so it
- * never spins the CPU. */
+/* Draw thread: nap until the OSD is visible, then poll-draw (unless hook-only).
+ * Self-paces via the vblank wait inside osd_draw_poll. */
 static int OsdDrawThread(SceSize args, void *argp)
 {
 	(void)args; (void)argp;
@@ -1056,14 +969,12 @@ static int OsdDrawThread(SceSize args, void *argp)
 	while(osd_draw_run)
 	{
 		if(p_getframebuf && osd_draw_mode != 1 && osd_ticks > 0 && osd_text[0])
-			osd_draw_poll();                  /* self-paces via vblank wait */
+			osd_draw_poll();
 		else
-			sceKernelDelayThread(30000);      /* nothing to do - nap 30 ms */
+			sceKernelDelayThread(30000);      /* nap */
 	}
 
-	/* Just return - DON'T self-delete. osd_shutdown() joins us with WaitThreadEnd
-	 * and then deletes the thread, so the PRX is never unloaded while we're alive. */
-	return 0;
+	return 0;   /* don't self-delete; osd_shutdown joins + deletes us */
 }
 
 void osd_set_draw_mode(int mode)
@@ -1073,15 +984,12 @@ void osd_set_draw_mode(int mode)
 
 void osd_shutdown(void)
 {
-	osd_draw_run = 0;        /* tells the thread (and any in-flight poll) to stop NOW */
+	osd_draw_run = 0;        /* stop the thread (and any in-flight poll) now */
 
 	if(osd_draw_thid >= 0)
 	{
-		/* Deterministically wait for the thread to actually leave its entry point
-		 * before we let module_stop unload us. A blind delay isn't enough: if the
-		 * thread is parked in WaitVblankStart when we unload, it wakes into freed
-		 * code = reboot. WaitThreadEnd returns as soon as it exits (a vblank is
-		 * ~16 ms away); the 1 s timeout is just a safety net. */
+		/* Join before module_stop unloads us (else the thread could wake into freed
+		 * code). Timeout is just a safety net. */
 		SceUInt timeout = 1000000;
 		sceKernelWaitThreadEnd(osd_draw_thid, &timeout);
 		sceKernelDeleteThread(osd_draw_thid);
@@ -1097,8 +1005,7 @@ int osd_install(void)
 
 	log_msg("osd_install: enter");
 
-	/* The export the XMB and games actually call lives in the USER "sceDisplay"
-	 * library (PSP-HUD hooks exactly this). Fall back to the kernel library. */
+	/* sceDisplaySetFrameBuf NID 0x289D82FE (user lib, then kernel lib). */
 	addr = find_export("sceDisplay_Service", "sceDisplay", 0x289D82FE);
 	log_kx("osd_install.addr_sceDisplay", addr);
 	if(!addr)
@@ -1108,13 +1015,13 @@ int osd_install(void)
 	}
 	if(!addr) { log_msg("osd_install: FAIL (function not found)"); return 0; }
 
-	/* Primary: patch the syscall-table slot (catches user-mode callers). */
+	/* Prefer patching the syscall-table slot (catches user-mode callers). */
 	slot = find_syscall_slot(addr);
 	log_kx("osd_install.syscall_slot", (u32)slot);
 
 	if(slot)
 	{
-		orig_setframebuf = (void *)addr;       /* original intact -> call directly */
+		orig_setframebuf = (void *)addr;       /* call the original directly */
 		ints = pspSdkDisableInterrupts();
 		*slot = (u32)osd_set_frame_buf;
 		pspSdkEnableInterrupts(ints);
@@ -1122,18 +1029,15 @@ int osd_install(void)
 	}
 	else
 	{
-		/* Fallback: redirect the function entry (still catches syscall callers,
-		 * which jump to the entry, plus any kernel callers). */
-		orig_setframebuf = hijack_install(addr, osd_set_frame_buf);
+		orig_setframebuf = hijack_install(addr, osd_set_frame_buf);   /* fallback */
 		log_msg("osd_install: OK (function entry hijacked - fallback)");
 	}
 
 	sceKernelDcacheWritebackAll();
 	sceKernelIcacheClearAll();
 
-	/* Resolve the poll-draw helpers. These are stock display exports; if either is
-	 * missing we simply never poll (auto mode = exactly today's behaviour, Mode 2 =
-	 * no-op). sceDisplayGetFrameBuf NID 0xEEDA2E54, WaitVblankStart NID 0x984C27E7. */
+	/* Resolve poll-draw helpers (GetFrameBuf 0xEEDA2E54, WaitVblankStart 0x984C27E7);
+	 * if missing, poll just never runs. */
 	if(osd_draw_mode != 1)
 	{
 		u32 gfb = find_export("sceDisplay_Service", "sceDisplay", 0xEEDA2E54);

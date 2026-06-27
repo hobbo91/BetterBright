@@ -1,11 +1,8 @@
 /*
- * log.c  -  opt-in diagnostic log for BetterBright.
+ * log.c - opt-in diagnostic log (debug_enable=2).
  *
- * Ring-buffered: log_* calls format a line into an in-RAM ring (safe from any
- * context, including the brightness/display hooks); the worker thread calls
- * log_drain() to write pending lines to <plugin dir>/BetterBright.log from its
- * safe context. Self-contained: no stdio/sprintf (this is a -nostdlib kernel PRX),
- * just sceIo* with k1 cleared, exactly like SaveBrightness. See log.h.
+ * log_* push a line into an in-RAM ring (safe from any context, hooks included);
+ * the worker calls log_drain() to write to BetterBright.log. No stdio (kernel PRX).
  */
 
 #include <pspkernel.h>
@@ -17,10 +14,8 @@
 #define PSP_O_APPEND 0x0100
 #endif
 
-/* Ring geometry. RING_N lines of LOGLINE chars each (~8 KB of BSS). Big enough to
- * absorb a burst during the ~10 s load window before the worker first drains. */
-#define RING_N   96
-#define LOGLINE  80
+#define RING_N   96      /* lines */
+#define LOGLINE  80      /* chars/line */
 
 static char g_path[256];
 static int  g_on        = 0;
@@ -45,14 +40,9 @@ void log_set_path(const char *plugin_path)
 void log_enable(int on){ g_on = on; }
 int  log_is_on(void)   { return g_on; }
 
-/* ---- ring push (ANY context) ---------------------------------------------- */
-/* Copy a finished line into the ring with a timestamp. Interrupts are off only
- * for the few instructions that claim a slot and bump head, so two pushers (a hook
- * and the worker) can't claim the same slot. Pushers ONLY ever touch head; the
- * drain ONLY ever touches tail - so there's no cross-thread write race on either
- * index. On overflow the drain (single reader) skips ahead; a pusher just keeps
- * writing, dropping the oldest not-yet-drained line. slot is always taken mod N,
- * so the array access is bounds-safe whatever the indices do. */
+/* ---- ring push (ANY context) ----
+ * Pushers only touch head (interrupts off briefly to claim a slot); the drain only
+ * touches tail - no cross-thread index race. slot is mod N, so always bounds-safe. */
 static void ring_push(const char *s)
 {
 	unsigned int slot;
@@ -69,7 +59,7 @@ static void ring_push(const char *s)
 	pspSdkEnableInterrupts(intc);
 }
 
-/* ---- tiny formatters (no stdio) ------------------------------------------- */
+/* ---- tiny formatters (no stdio) ---- */
 static void put_str(char *b, int *pos, int max, const char *s)
 {
 	while(*s && *pos < max - 1) b[(*pos)++] = *s++;
@@ -101,7 +91,7 @@ static void put_hex(char *b, int *pos, int max, unsigned int v)
 		if(*pos < max - 1) b[(*pos)++] = hx[(v >> i) & 0xF];
 }
 
-/* ---- public push helpers (ANY context) ------------------------------------ */
+/* ---- public push helpers (ANY context) ---- */
 void log_msg(const char *s){ if(g_on) ring_push(s); }
 
 void log_kv(const char *label, int v)
@@ -152,7 +142,7 @@ void log_event(const char *event, int fwL, int plU, const char *draw)
 	ring_push(line);
 }
 
-/* ---- file side (SAFE CONTEXT ONLY) ---------------------------------------- */
+/* ---- file side (SAFE CONTEXT ONLY) ---- */
 void log_reset(void)
 {
 	SceUID fd;
@@ -167,8 +157,7 @@ void log_reset(void)
 	pspSdkSetK1(k1);
 }
 
-/* Flush every pending ring line to the file in one open/close. Snapshots the head
- * once so lines pushed mid-drain are simply caught next time. */
+/* Flush pending ring lines to the file in one open/close. */
 void log_drain(void)
 {
 	SceUID fd;
@@ -179,8 +168,7 @@ void log_drain(void)
 	head = ring_head;                    /* snapshot (atomic int read) */
 	if(ring_tail == head) return;        /* nothing pending */
 
-	/* If pushers lapped us since last drain, skip ahead to the oldest line still
-	 * in the ring (drain is the only writer of tail, so this is race-free). */
+	/* if pushers lapped us, skip to the oldest line still in the ring */
 	if(head - ring_tail > RING_N)
 	{
 		ring_drops += (head - ring_tail) - RING_N;
@@ -192,9 +180,9 @@ void log_drain(void)
 	if(fd >= 0)
 	{
 		static unsigned int last_drops = 0;
-		sceIoLseek(fd, 0, 2 /* PSP_SEEK_END */);   /* force EOF in case O_APPEND is flaky */
+		sceIoLseek(fd, 0, 2 /* PSP_SEEK_END */);   /* force EOF (O_APPEND can be flaky) */
 
-		if(ring_drops != last_drops)               /* note any lines lost to a burst */
+		if(ring_drops != last_drops)               /* note dropped lines */
 		{
 			char d[48]; int p = 0;
 			put_str(d, &p, (int)sizeof(d), "*** log overflow: dropped ");
@@ -212,7 +200,7 @@ void log_drain(void)
 			char line[LOGLINE + 24];
 			int pos = 0;
 
-			/* "[<sec>.<ms>] " timestamp prefix */
+			/* "[sec.ms] " prefix */
 			line[pos++] = '[';
 			put_dec(line, &pos, (int)sizeof(line), (int)(us / 1000000u));
 			line[pos++] = '.';

@@ -6,9 +6,7 @@
 #include <string.h>
 #include "conf.h"
 
-/* Minimal integer parser, so we don't pull in newlib's atoi()/stdlib (which in
- * turn drags stdio + locking stubs into a kernel PRX). Values here are small
- * (brightness 0-100, option flags), so this is all we need. */
+/* Minimal atoi (avoids dragging newlib stdlib into a kernel PRX). */
 static int str_to_int(const char *s)
 {
 	int v = 0, neg = 0;
@@ -18,9 +16,7 @@ static int str_to_int(const char *s)
 	return neg ? -v : v;
 }
 
-/* dim_level= parsing. "AUTO" (any case) -> -1 (use 2nd-lowest ini value at apply
- * time). A plain number in 0-100 is used as-is. Anything else (out of range,
- * non-numeric) falls back to 28, per spec. */
+/* dim_level: "AUTO" -> -1, a 0-100 number as-is, anything else -> 28. */
 static int parse_dim_level(const char *v)
 {
 	if((v[0]=='A'||v[0]=='a') && (v[1]=='U'||v[1]=='u') &&
@@ -34,28 +30,23 @@ static int parse_dim_level(const char *v)
 	return 28;
 }
 
-/* Strict brightness-value validator. A line is a valid brightness ONLY if it is a
- * non-empty run of decimal digits whose value is 0-100. Anything else (letters,
- * signs, decimals, out-of-range, junk) is rejected and the caller drops the line -
- * so a typo in the ini can never become a bad brightness value or crash the plugin.
- * Returns 1 and fills *out on success, 0 otherwise. */
+/* Valid brightness = a digit string 0-100; anything else is rejected (dropped). */
 static int parse_brightness(const char *s, int *out)
 {
 	int v = 0, i;
 	if(s[0] == '\0') return 0;
 	for(i = 0; s[i]; i++)
 	{
-		if(s[i] < '0' || s[i] > '9') return 0;   /* non-digit -> not a brightness */
+		if(s[i] < '0' || s[i] > '9') return 0;
 		v = v * 10 + (s[i] - '0');
-		if(v > 100) return 0;                    /* out of range */
+		if(v > 100) return 0;
 	}
 	if(out) *out = v;
 	return 1;
 }
 
-/* On-disk format for BetterBright.dat. The magic guards against reading a stale or
- * unrelated file written by an older/newer build. */
-#define BRIGHT_MAGIC 0x42523304   /* 'B''R''3', version 4 */
+/* BetterBright.dat format (magic guards against a stale/foreign file). */
+#define BRIGHT_MAGIC 0x42523304   /* 'B''R''3', v4 */
 typedef struct {
 	int magic;
 	int level;   /* 0-100      */
@@ -105,7 +96,7 @@ int Check_EOF(SceUID fd)
 	return 1;
 }
 
-/* Replace the trailing file name of `buf` with "BetterBright.ini". */
+/* Swap the trailing filename of `buf` for BetterBright.ini / .dat. */
 int GetConfigPath(char *buf)
 {
 	char *p = strrchr(buf, '/');
@@ -114,7 +105,6 @@ int GetConfigPath(char *buf)
 	return 0;
 }
 
-/* Replace the trailing file name of `buf` with "BetterBright.dat". */
 int GetDataPath(char *buf)
 {
 	char *p = strrchr(buf, '/');
@@ -123,18 +113,14 @@ int GetDataPath(char *buf)
 	return 0;
 }
 
-/*
- * Returns 1 if `line` was a recognised "key=value" setting line (so it must NOT
- * be treated as a brightness value), or 0 if it is a plain brightness number.
- * Unknown key=value lines are still consumed (returns 1) so a typo'd option can
- * never be mistaken for a brightness level.
- */
+/* Returns 1 if `line` is a key=value setting (consumed, even if unknown), 0 if it's
+ * a plain brightness value. */
 static int parse_setting(const char *line, BrightSettings *s)
 {
 	const char *eq = strchr(line, '=');
 	int klen, val;
 
-	if(!eq) return 0;                 /* no '=' -> it's a brightness value */
+	if(!eq) return 0;                 /* no '=' -> brightness value */
 	if(!s)  return 1;
 
 	klen = (int)(eq - line);
@@ -178,10 +164,7 @@ int CountItem(char *file)
 	SceUID fd = sceIoOpen(file, PSP_O_RDONLY, 0777);
 	if(fd < 0)
 	{
-		/* fall back to the ms0: copy if the given device failed */
-		file[0] = 'm';
-		file[1] = 's';
-
+		file[0] = 'm'; file[1] = 's';   /* retry on ms0: */
 		fd = sceIoOpen(file, PSP_O_RDONLY, 0777);
 		if(fd < 0) return -1;
 	}
@@ -190,9 +173,7 @@ int CountItem(char *file)
 	{
 		ReadLine(fd, buffer, 256);
 
-		/* Count only VALID brightness numbers (0-100): skip blanks, comments,
-		 * settings, and any malformed line, so the count matches what ReadItem
-		 * actually stores. */
+		/* count only valid 0-100 values (matches what ReadItem stores) */
 		if(buffer[0] != '\0' && buffer[0] != '#' && strchr(buffer, '=') == NULL
 		   && parse_brightness(buffer, (int *)0))
 			count++;
@@ -232,12 +213,11 @@ int ReadItem(const char *file, Bright *buf, BrightSettings *settings)
 		ReadLine(fd, buffer, 256);
 
 		if(buffer[0] == '\0' || buffer[0] == '#') continue;   /* blank / comment */
-		if(parse_setting(buffer, settings))        continue;   /* key=value       */
+		if(parse_setting(buffer, settings))        continue;   /* key=value */
 
 		{                                                      /* brightness value */
 			int v;
-			if(parse_brightness(buffer, &v)) buf[count++].level = v;  /* valid 0-100 */
-			/* else: malformed line - silently ignored */
+			if(parse_brightness(buffer, &v)) buf[count++].level = v;  /* else: ignored */
 		}
 	}
 
@@ -245,8 +225,7 @@ int ReadItem(const char *file, Bright *buf, BrightSettings *settings)
 	return count;
 }
 
-/* Persist {level,index} to BetterBright.dat. Best-effort: failure is non-fatal.
- * k1 is cleared so the file access is allowed regardless of caller context. */
+/* Persist {level,index} to the .dat (best-effort; k1 cleared for any caller ctx). */
 int SaveBrightness(const char *file, int level, int index)
 {
 	BrightSave s;
@@ -266,7 +245,7 @@ int SaveBrightness(const char *file, int level, int index)
 	return 0;
 }
 
-/* Read BetterBright.dat. Returns 0 and fills level/index on success, -1 otherwise. */
+/* Read the .dat: 0 + fills level/index on success, -1 otherwise. */
 int LoadBrightness(const char *file, int *level, int *index)
 {
 	BrightSave s;

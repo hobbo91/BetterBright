@@ -25,15 +25,16 @@ original idea came from.
   
 <table>
   <tr>
-    <td><img src="screens/pic_0002.png" width="100%" alt="screen 1"></td>
-    <td><img src="screens/pic_0010.png" width="100%" alt="screen 2"></td>
+    <td><img src="screens/pic_0001.jpg" width="100%" alt="screen 1"></td>
+    <td><img src="screens/pic_0002.jpg" width="100%" alt="screen 2"></td>
   </tr>
   <tr>
-    <td><img src="screens/pic_0005.png" width="100%" alt="screen 3"></td>
-    <td><img src="screens/pic_0013.png" width="100%" alt="screen 4"></td>
+    <td><img src="screens/pic_0003.jpg" width="100%" alt="screen 3"></td>
+    <td><img src="screens/pic_0004.jpg" width="100%" alt="screen 4"></td>
   </tr>
   <tr>
-    <td colspan="2"><img src="screens/psp-3000vb.jpg" width="100%" alt="PSP-3000VB running BetterBright"></td>
+    <td><img src="screens/pic_0005.jpg" width="100%" alt="screen 5"></td>
+    <td><img src="screens/pic_0006.jpg" width="100%" alt="screen 6"></td>
   </tr>
 </table>
 
