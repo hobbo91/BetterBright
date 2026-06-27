@@ -19,6 +19,8 @@ typedef struct {
 	int osd_text_colour;       /* 1=black 2=white 3=red 4=green 5=blue (text def 2)   */
 	int osd_size;              /* 1 = normal, 2 = large (2x)                          */
 	int osd_position;          /* 1 = bottom, 2 = top                                 */
+	int osd_draw_mode;         /* 0 = auto (hook, poll fallback), 1 = hook only,      */
+	                           /* 2 = poll only (draw into the live framebuffer)      */
 } BrightSettings;
 
 /* paths */

@@ -1,7 +1,7 @@
 /*
  * BetterBright  -  brightness control plugin for PSP (CFW: ARK-4 / FasterARK)
  *
- *   v0.9   -   developed by hobbo91  (https://github.com/hobbo91)
+ *   v0.91  -   developed by hobbo91  (https://github.com/hobbo91)
  *
  * Based on the older "bright3" brightness plugin by hiroi01 (itself a
  * mod of "bright" by plum): https://hiroi01.com/?p=prx#bright3 - the original
@@ -40,6 +40,7 @@ STMOD_HANDLER sctrlHENSetStartModuleHandler(STMOD_HANDLER new_handler);
 #include "memory.h"
 #include "osd.h"
 #include "log.h"
+#include "version.h"
 
 PSP_MODULE_INFO("BetterBright", 0x1000, 0, 1);
 
@@ -62,11 +63,11 @@ int  g_dim_level     = -1;   /* from ini: -1=AUTO (2nd-lowest), else 0-100      
 int  g_keep_display_on = 0;  /* from ini: 1 = never dim AND never auto-off      */
 int  g_disable_sleep = 0;    /* from ini: 1 = prevent the auto-sleep timer      */
 int  g_osd_enable    = 1;    /* from ini: 1 = show "Display Brightness: NN"     */
-int  g_debug_enable  = 0;    /* from ini: 1 = verbose log + DEBUG OSD line      */
+int  g_osd_draw_mode = 0;    /* from ini: 0=auto 1=hook-only 2=poll-only        */
+int  g_debug_enable  = 0;    /* from ini: 0=off, 1=DEBUG OSD line, 2=OSD + log file */
 volatile int g_running = 1;  /* worker thread run flag                          */
 volatile int g_dirty   = 0;  /* "brightness changed, please persist" flag       */
 
-#define BB_VERSION "0.9"
 int  g_first_run = 0;        /* 1 = BetterBright.dat was absent at boot          */
 
 /* Write-coalescing: ApplyIndex sets g_dirty and restarts g_save_settle on every
@@ -120,6 +121,8 @@ static void ApplyIndex(int i)
 	saved_level = bright_buf[i].level;
 	sceDisplaySetBrightness(saved_level, 0);
 	if(g_osd_enable) osd_notify(saved_level);   /* show "Display Brightness: NN" */
+	log_kv("apply.index", cur);
+	log_kv("apply.level", saved_level);         /* brightness we just set         */
 	g_dirty       = 1;                 /* ask WorkerThread to persist        */
 	g_save_settle = SAVE_SETTLE;       /* ...but not until it stops changing */
 }
@@ -152,7 +155,11 @@ static void StepBackwardClamp(void)
 /* Re-apply the remembered brightness WITHOUT advancing or re-saving. */
 static void ApplySaved(void)
 {
-	if(saved_level >= 0) sceDisplaySetBrightness(saved_level, 0);
+	if(saved_level >= 0)
+	{
+		sceDisplaySetBrightness(saved_level, 0);
+		log_kv("restore.level", saved_level);   /* reasserted (wake/resume/load)  */
+	}
 }
 
 /* Our own dimming: drop to the configured dim level WITHOUT touching saved_level,
@@ -169,7 +176,7 @@ static void ApplyDim(void)
 		dim = bright_buf[(bright_count > 1) ? 1 : 0].level; /* AUTO: 2nd-lowest */
 	else
 		return;
-	if(dim < saved_level) sceDisplaySetBrightness(dim, 0);
+	if(dim < saved_level) { sceDisplaySetBrightness(dim, 0); log_kv("dim.level", dim); }
 }
 
 /* ----------------------------------------------------------------------------
@@ -200,6 +207,16 @@ static volatile unsigned int g_last_wake_us = 0;  /* guards against re-dim on wa
                  PSP_CTRL_LEFT|PSP_CTRL_LTRIGGER|PSP_CTRL_RTRIGGER|PSP_CTRL_TRIANGLE| \
                  PSP_CTRL_CIRCLE|PSP_CTRL_CROSS|PSP_CTRL_SQUARE)
 
+/* One brightness-handler event -> the DEBUG OSD line (debug>=1) AND the log ring
+ * (debug>=2; log_event self-gates). Both are safe from this hook context: the OSD
+ * is pure memory, the log only pushes to RAM. level = firmware/native step, our
+ * saved_level = the brightness we hold, plus which draw path is on screen. */
+static void DbgEvent(const char *ev, int level)
+{
+	if(g_debug_enable >= 1 && g_osd_enable) osd_debug(ev, level, (unsigned int)saved_level);
+	log_event(ev, level, saved_level, osd_draw_path_name());
+}
+
 void sceDisplaySetBrightnessPatched(int level, int unk1)
 {
 	unsigned int now = sceKernelGetSystemTimeLow();
@@ -227,9 +244,9 @@ void sceDisplaySetBrightnessPatched(int level, int unk1)
 		{
 			ApplyDim();
 			g_dimmed = 1;
-			if(g_debug_enable && g_osd_enable) osd_debug("dim", level, (unsigned int)saved_level);
+			DbgEvent("dim", level);
 		}
-		else if(g_debug_enable && g_osd_enable) osd_debug("idle", level, (unsigned int)saved_level);
+		else DbgEvent("idle", level);
 		return;
 	}
 
@@ -239,7 +256,7 @@ void sceDisplaySetBrightnessPatched(int level, int unk1)
 		g_dimmed = 0;
 		g_last_wake_us = now;
 		ApplySaved();
-		if(g_debug_enable && g_osd_enable) osd_debug("wake", level, (unsigned int)saved_level);
+		DbgEvent("wake", level);
 		return;
 	}
 
@@ -259,7 +276,7 @@ void sceDisplaySetBrightnessPatched(int level, int unk1)
 	}
 	if(!did_combo) StepForward();
 
-	if(g_debug_enable && g_osd_enable) osd_debug("press", level, (unsigned int)saved_level);
+	DbgEvent(did_combo ? "combo" : "press", level);
 }
 
 /* Re-assert our saved level for a short window right after the plugin loads, so a
@@ -295,6 +312,7 @@ int WorkerThread(SceSize args, void *argp)
 	unsigned int last_loop_us = 0;
 	SceCtrlData pad;
 	int have_pad;
+	const char *last_path = (const char *)0;   /* last logged OSD draw path */
 
 	(void)args; (void)argp;
 
@@ -318,6 +336,7 @@ int WorkerThread(SceSize args, void *argp)
 		{
 			if(last_loop_us != 0 && (now_us - last_loop_us) > 2000000u)
 			{
+				log_msg("resume-from-sleep: reasserting brightness");
 				ApplySaved();
 				g_dimmed = 0;
 				g_last_wake_us = now_us;
@@ -330,6 +349,7 @@ int WorkerThread(SceSize args, void *argp)
 		 * sampled continuously and reliably). */
 		if(g_dimmed && have_pad && (pad.Buttons & ANY_BTN))
 		{
+			log_msg("wake (button): restoring brightness");
 			ApplySaved();
 			g_dimmed = 0;
 			g_last_wake_us = sceKernelGetSystemTimeLow();
@@ -344,9 +364,13 @@ int WorkerThread(SceSize args, void *argp)
 				int now = -1, unk = 0;
 				sceDisplayGetBrightness(&now, &unk);
 				if(now > 0 && now < saved_level)
+				{
 					sceDisplaySetBrightness(saved_level, 0);
+					log_kv("loadwin.reassert", saved_level);  /* undid firmware init dim */
+				}
 			}
 			g_load_ticks--;
+			if(g_load_ticks == 0) log_msg("load window ended");
 		}
 
 		/* (b) keep_display_on: reset the display idle timer every loop so the screen
@@ -371,10 +395,13 @@ int WorkerThread(SceSize args, void *argp)
 				g_dirty = 0;
 				if(saved_level != g_disk_level || cur != g_disk_index)
 				{
-					SaveBrightness(data_path, saved_level, cur);
+					int r = SaveBrightness(data_path, saved_level, cur);
 					g_disk_level = saved_level;
 					g_disk_index = cur;
-					if(g_debug_enable) { log_kv("save.level", saved_level); log_kv("save.index", cur); }
+					log_msg("dat.write (brightness change)");
+					log_kv("dat.write.level",  saved_level);
+					log_kv("dat.write.index",  cur);
+					log_kv("dat.write.result", r);   /* 0 = ok */
 				}
 			}
 		}
@@ -383,6 +410,15 @@ int WorkerThread(SceSize args, void *argp)
 		 * when the OSD is enabled - when it's off, leave the subsystem alone) */
 		if(g_osd_enable)
 			osd_tick();
+
+		/* (d2) note when the OSD's effective draw path flips (e.g. entering a game
+		 * that doesn't drive the hook -> auto-poll). Pointer compare is fine: the
+		 * names are static strings. Only meaningful when the log is on. */
+		if(g_osd_enable && log_is_on())
+		{
+			const char *path = osd_draw_path_name();
+			if(path != last_path) { log_ks("draw-path", path); last_path = path; }
+		}
 
 		/* (e) combo_mode 2 polling (L+R+Up/Down). combo_mode 1 is read in the hook. */
 		if(g_combo_mode == 2 && have_pad)
@@ -397,6 +433,11 @@ int WorkerThread(SceSize args, void *argp)
 			up_prev   = up_now;
 			down_prev = down_now;
 		}
+
+		/* (f) flush any log lines pushed since last loop (by the worker OR the
+		 * hooks) to BetterBright.log. This is the ONLY place file I/O for the log
+		 * happens - a safe context - which is what lets hooks log via the ring. */
+		log_drain();
 
 		/* Normally idle ~80ms between checks. During the load window only, poll
 		 * brightness once more halfway through that wait, so the firmware's init
@@ -492,22 +533,27 @@ int module_start(SceSize args, void *argp)
 		g_debug_enable     = settings.debug_enable;
 		osd_set_style(settings.osd_text_colour, settings.osd_bg_colour,
 		              settings.osd_size, settings.osd_position);
+		osd_set_draw_mode(settings.osd_draw_mode);
+		g_osd_draw_mode = settings.osd_draw_mode;
 	}
 
 	/* Bring up logging as early as we can (the ini is the first thing we know).
 	 * All log writes happen here in module_start or in the worker - never in the
 	 * display/brightness hooks. */
 	log_set_path((char *)argp);
-	log_enable(g_debug_enable);
-	if(g_debug_enable)
+	log_enable(g_debug_enable >= 2);   /* file log only at debug_enable=2          */
+	if(g_debug_enable >= 2)
 	{
-		log_reset();
+		log_reset();                    /* fresh file each boot                     */
 		log_msg("=== BetterBright v" BB_VERSION " module_start ===");
-		log_kv("settings.combo_mode",          g_combo_mode);
+		log_ks("dat.path",                      data_path);
+		log_kv("settings.combo_mode",           g_combo_mode);
 		log_kv("settings.dim_level",            g_dim_level);
 		log_kv("settings.keep_display_on",      g_keep_display_on);
 		log_kv("settings.disable_sleep",        g_disable_sleep);
 		log_kv("settings.osd_enable",           g_osd_enable);
+		log_kv("settings.osd_draw_mode",        g_osd_draw_mode);
+		log_kv("settings.debug_enable",         g_debug_enable);
 		log_kv("settings.first_run",            g_first_run);
 		log_kv("ini.bright_count",              bright_count);
 	}
@@ -544,7 +590,11 @@ int module_start(SceSize args, void *argp)
 		saved_level  = lvl;
 		saved_index  = best;
 		cur          = best;
-		SaveBrightness(data_path, saved_level, cur);  /* the .dat now exists */
+		{
+			int r = SaveBrightness(data_path, saved_level, cur);  /* the .dat now exists */
+			log_msg("firstrun: .dat created");
+			log_kv("dat.write.result", r);
+		}
 		g_disk_level = saved_level;
 		g_disk_index = cur;
 		log_kv("firstrun.saved_level", saved_level);
@@ -582,23 +632,34 @@ int module_start(SceSize args, void *argp)
 	if(g_first_run && g_osd_enable)
 		osd_message("BetterBright " BB_VERSION " by hobbo91");
 
+	log_msg("module_start: done, worker starting");
 	ApplySaved();    /* immediate attempt (in case we run after the firmware) */
 	StartWorker();   /* load-window persistence + hold + save + combo_mode 2  */
 
+	log_drain();     /* flush the boot lines now (don't wait for the first loop) */
 	return 0;
 }
 
 int module_stop(SceSize args, void *argp)
 {
 	(void)args; (void)argp;
+	log_msg("module_stop: unloading");
 	g_running = 0;
+	if(g_osd_enable) osd_shutdown();   /* stop the poll-draw thread before we free */
 	sceKernelDelayThread(150000);   /* let the worker (80ms loop) exit before we free */
 
 	/* Flush a still-pending change so a clean unload (e.g. exiting a game) keeps
 	 * it, even if the ~1s settle hadn't elapsed yet. */
 	if(g_dirty && (saved_level != g_disk_level || cur != g_disk_index))
-		SaveBrightness(data_path, saved_level, cur);
+	{
+		int r = SaveBrightness(data_path, saved_level, cur);
+		log_msg("dat.write (final flush on stop)");
+		log_kv("dat.write.level",  saved_level);
+		log_kv("dat.write.result", r);
+	}
 
+	/* Worker has exited (delay above), so we own the ring now - final flush. */
+	log_drain();
 	memoryFree(bright_buf);
 	return 0;
 }

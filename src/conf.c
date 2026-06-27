@@ -141,6 +141,8 @@ static int parse_setting(const char *line, BrightSettings *s)
 		s->osd_size = val;
 	else if(klen == 12 && strncmp(line, "osd_position", 12) == 0)
 		s->osd_position = val;
+	else if(klen == 13 && strncmp(line, "osd_draw_mode", 13) == 0)
+		s->osd_draw_mode = val;
 
 	return 1;
 }
@@ -191,6 +193,7 @@ int ReadItem(const char *file, Bright *buf, BrightSettings *settings)
 		settings->osd_text_colour     = 2;    /* white */
 		settings->osd_size            = 1;    /* normal */
 		settings->osd_position        = 1;    /* bottom */
+		settings->osd_draw_mode       = 0;    /* auto (hook + poll fallback) */
 	}
 
 	SceUID fd = sceIoOpen(file, PSP_O_RDONLY, 0777);

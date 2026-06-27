@@ -24,6 +24,7 @@
 #include <string.h>
 #include "osd.h"
 #include "log.h"
+#include "version.h"
 
 /* NOTE: we must read the module's export table through SceModule2, not the stock
  * pspsdk SceModule. The CFW firmware struct has two extra words (mpid_text /
@@ -240,10 +241,106 @@ static const u8 bb_font[] =
 #define OSD_TICKS  32             /* worker loops (~80 ms each) ~= 2.5 s        */
 #define OSD_MSG_TICKS 63          /* one-off messages: ~5 s                      */
 
-static char osd_text[48];
+static char osd_text[80];   /* must hold the DEBUG line: "BB <ver> DEBUG: L=.. U=.. event=.. draw=.." */
 static volatile int osd_ticks = 0;
 static volatile int osd_lock  = 0;      /* >0: a locked message owns the OSD, no overwrite */
 static void *orig_setframebuf = NULL;   /* the real SetFrameBuf (called directly) */
+
+/* ---- Mode 2 (poll-draw) state ---------------------------------------------
+ * Some games never drive the sceDisplaySetFrameBuf slot we hook, so the in-hook
+ * draw (Mode 1) never runs for them and the OSD is absent. The fallback, used by
+ * the stable PSP-HUD plugin, is to ask the display service what is CURRENTLY on
+ * screen (sceDisplayGetFrameBuf - returns the live buffer regardless of who set
+ * it) and draw straight into it from a thread, synced to vblank. We reuse the
+ * exact same draw16/draw32 routines, the real pixelformat/stride from the driver,
+ * and the real buffer address - i.e. none of the hardcoded-VRAM / fixed-8888 /
+ * no-vblank mistakes that crashed the old "Brightness-Control" reference plugin. */
+static int (*p_getframebuf)(void **topaddr, int *bufwidth, int *pixfmt, int sync) = NULL;
+static int (*p_waitvblankstart)(void) = NULL;
+
+/* 0 = auto (hook, poll only when the hook is idle), 1 = hook only, 2 = poll only */
+static int osd_draw_mode = 0;
+
+/* osd_last_frame_us (below) is "something drew a frame" and is bumped by BOTH the
+ * hook and the poll path, so the visibility timer counts down in either mode.
+ * osd_last_hook_us is bumped ONLY by the hook, so auto-mode can tell whether the
+ * in-hook draw is actually reaching the screen for the current game. */
+static volatile unsigned int osd_last_hook_us = 0;
+
+/* Cheap mutual exclusion so the hook and the poll thread never paint at once.
+ * A stray race is only ever visual (both paths are bounds-checked), never a
+ * crash - mirrors PSP-HUD's single 'wait' flag. */
+static volatile int osd_painting = 0;
+
+/* Poll-draw thread lifecycle. */
+static volatile int osd_draw_run = 0;
+static SceUID osd_draw_thid = -1;
+
+/* ---- flip-chain framebuffer set -------------------------------------------
+ * Games double/triple-buffer: they cycle the displayed frame between 2-3 buffers.
+ * If we paint only the one buffer GetFrameBuf hands back, the frames showing the
+ * OTHER buffer have no text -> fast flicker. So we remember the recently-seen
+ * distinct framebuffer addresses (fed by BOTH the hook and the poll) and stamp the
+ * text into ALL of them each pass; whichever buffer is shown next already has it.
+ *
+ * STABILITY: writing to a stale framebuffer pointer is the one real risk here, so
+ * the cache is guarded four ways - entries expire fast (a freed buffer stops being
+ * re-seen and ages out), the whole set is dropped the moment bufferwidth/format
+ * changes (that's when a game reallocates buffers), only VRAM addresses are ever
+ * cached (VRAM is fixed hardware memory, always mapped - a stale write there is a
+ * one-frame glitch, never a fault), and the thread is fully joined before unload.
+ *
+ * The buffer GetFrameBuf returns "live" each pass is a separate matter: it's the
+ * one the display is actively scanning, so it's ALWAYS mapped (even RAM ones, even
+ * mid-teardown) and is painted directly - that's how RAM-framebuffer games like
+ * Lego Batman get covered without putting a RAM pointer in the cache. */
+#define FB_MAX 4
+#define FB_EXPIRE_US 200000u            /* drop an address not re-seen for 200 ms */
+static volatile u32 fb_addr[FB_MAX];
+static volatile unsigned int fb_seen[FB_MAX];
+static volatile int fb_bw = 0;
+static volatile int fb_pf = -1;
+
+/* Normalise to the cached base address (strip the 0x40000000 uncached bit) so the
+ * same buffer seen cached/uncached dedupes to one entry. */
+static u32 fb_norm(u32 a) { return a & 0x0FFFFFFFu; }
+
+/* Accept only VRAM addresses (the 2 MB eDRAM at 0x04000000..0x04200000) into the
+ * async flip-chain set. VRAM is fixed hardware memory - always mapped - so even a
+ * stale write is a harmless one-frame glitch, never a fault. Main-RAM framebuffers
+ * are deliberately excluded: they're the ones a game frees on exit, and chasing a
+ * freed RAM pointer from the poll thread is what reboots the PSP. A live RAM buffer
+ * is still covered by the synchronous in-hook draw, which only ever runs on the
+ * exact frame the game itself is presenting (so it can't be stale). */
+static int fb_plausible(u32 a)
+{
+	a = fb_norm(a);
+	return (a >= 0x04000000u && a < 0x04200000u);       /* VRAM only */
+}
+
+/* Remember a framebuffer the system just used (hook topaddr or poll GetFrameBuf). */
+static void fb_register(u32 top, int bw, int pf, unsigned int now)
+{
+	int i, slot;
+	if(bw <= 0 || pf < 0 || pf > 3 || !fb_plausible(top)) return;
+	top = fb_norm(top);
+
+	if(bw != fb_bw || pf != fb_pf)          /* geometry changed -> drop the old set */
+	{
+		for(i = 0; i < FB_MAX; i++) { fb_addr[i] = 0; fb_seen[i] = 0; }
+		fb_bw = bw; fb_pf = pf;
+	}
+	for(i = 0; i < FB_MAX; i++)              /* already known -> refresh timestamp   */
+		if(fb_addr[i] == top) { fb_seen[i] = now; return; }
+
+	slot = 0;                                /* else take an empty or the oldest slot */
+	for(i = 0; i < FB_MAX; i++)
+	{
+		if(fb_addr[i] == 0) { slot = i; break; }
+		if(fb_seen[i] < fb_seen[slot]) slot = i;
+	}
+	fb_addr[slot] = top; fb_seen[slot] = now;
+}
 
 /* diagnostic counters (read by osd_log_status, written by the hook/notify) */
 static volatile int osd_hook_calls   = 0;   /* times our SetFrameBuf hook ran     */
@@ -337,37 +434,55 @@ void osd_note(const char *tag, int level)
 	osd_notify_calls++;
 }
 
-/* Debug build: "DEBUG L=<native> B=<brightness> event=<tag>" - L is the firmware's
- * raw backlight step (44/60/72/84), B is our actual brightness (the ini value we
- * set). Shows every trigger (press / dim / wake / idle / OFF / ON). */
+/* In auto mode, the hook is "live" (driving this game) if it fired this recently;
+ * otherwise the poll thread is what's reaching the screen. */
+#define OSD_HOOK_LIVE_US 200000u   /* 200 ms */
+
+const char *osd_draw_path_name(void)
+{
+	if(osd_draw_mode == 1) return "hook";
+	if(osd_draw_mode == 2) return "poll";
+	/* auto: report whichever is actually carrying the overlay right now */
+	if((sceKernelGetSystemTimeLow() - osd_last_hook_us) <= OSD_HOOK_LIVE_US)
+		return "auto-hook";
+	return "auto-poll";
+}
+
+int osd_is_visible(void){ return osd_ticks > 0; }
+
+/* tiny unsigned/signed decimal appender for the debug line */
+static char *osd_put_dec(char *p, int v)
+{
+	unsigned int u;
+	char tmp[12]; int n = 0;
+	if(v < 0) { *p++ = '-'; u = (unsigned int)(-v); } else u = (unsigned int)v;
+	if(u == 0) tmp[n++] = '0';
+	while(u) { tmp[n++] = (char)('0' + (u % 10)); u /= 10; }
+	while(n) *p++ = tmp[--n];
+	return p;
+}
+static char *osd_put_str(char *p, const char *s){ while(*s) *p++ = *s++; return p; }
+
+/* DEBUG overlay line:
+ *   "BB <ver> DEBUG: L=<fw> U=<plugin> event=<tag> draw=<path>"
+ * L = firmware/native backlight step (44/60/72/84), U = our actual brightness,
+ * draw = which path is reaching the screen (hook / poll / auto-hook / auto-poll).
+ * Fires on every trigger (press / dim / wake / idle). */
 void osd_debug(const char *event, int level, unsigned int unk1)
 {
-	static const char pre[] = "DEBUG L=";
 	char *p = osd_text;
-	unsigned int u;
 	int i = 0;
 
 	if(osd_lock > 0) return;
 
-	while(pre[i]) { *p++ = pre[i]; i++; }
-
-	if(level < 0) { *p++ = '-'; u = (unsigned int)(-level); }
-	else            u = (unsigned int)level;
-	{ char tmp[12]; int n = 0;
-	  if(u == 0) tmp[n++] = '0';
-	  while(u) { tmp[n++] = (char)('0' + (u % 10)); u /= 10; }
-	  while(n) *p++ = tmp[--n]; }
-
-	*p++ = ' '; *p++ = 'B'; *p++ = '=';
-	u = unk1;
-	{ char tmp[12]; int n = 0;
-	  if(u == 0) tmp[n++] = '0';
-	  while(u) { tmp[n++] = (char)('0' + (u % 10)); u /= 10; }
-	  while(n) *p++ = tmp[--n]; }
-
-	*p++ = ' '; *p++ = 'e'; *p++ = 'v'; *p++ = 'e'; *p++ = 'n'; *p++ = 't'; *p++ = '=';
-	i = 0;
+	p = osd_put_str(p, "BB " BB_VERSION " DEBUG: L=");
+	p = osd_put_dec(p, level);
+	p = osd_put_str(p, " U=");
+	p = osd_put_dec(p, (int)unk1);
+	p = osd_put_str(p, " event=");
 	while(event[i] && i < 12) { *p++ = event[i]; i++; }
+	p = osd_put_str(p, " draw=");
+	p = osd_put_str(p, osd_draw_path_name());
 	*p = 0;
 
 	osd_ticks = OSD_TICKS;
@@ -604,21 +719,153 @@ static void osd_draw(void *topaddr, int bufferwidth, int pixelformat)
  * No file I/O here - only cheap counter updates the worker later logs. */
 static int osd_set_frame_buf(void *topaddr, int bufferwidth, int pixelformat, int sync)
 {
+	unsigned int now = sceKernelGetSystemTimeLow();
 	osd_hook_calls++;
-	osd_last_frame_us = sceKernelGetSystemTimeLow();   /* "screen is drawing" heartbeat */
+	osd_last_hook_us  = now;       /* hook-only heartbeat (auto-mode fallback test) */
+	osd_last_frame_us = now;       /* "screen is drawing" heartbeat (drives osd_tick) */
 	osd_last_top = (u32)topaddr;
 	osd_last_bw  = bufferwidth;
 	osd_last_pf  = pixelformat;
 	osd_last_sync = sync;
 
-	if(osd_ticks > 0)
+	/* This buffer is part of the game's flip chain - remember it so the poll path
+	 * (and the line below) can keep every buffer stamped, not just the live one. */
+	fb_register((u32)topaddr, bufferwidth, pixelformat, now);
+
+	/* Mode 1 (hook) or Mode 0 (auto) draw in-hook here. Mode 2 (poll only) leaves
+	 * the frame to the poll thread. The paint guard keeps us off a frame the poll
+	 * thread is mid-write on (it draws into the live buffer, which may be this one). */
+	if(osd_ticks > 0 && osd_draw_mode != 2 && !osd_painting)
 	{
+		osd_painting = 1;
 		osd_draw_calls++;
 		osd_draw(topaddr, bufferwidth, pixelformat);
+		osd_painting = 0;
 	}
 
 	return ((int (*)(void *, int, int, int))orig_setframebuf)
 	       (topaddr, bufferwidth, pixelformat, sync);
+}
+
+/* One paint pass: the live buffer (any region - it's the one the display is
+ * scanning, so always mapped) plus every still-fresh CACHED buffer (VRAM only).
+ * Painting the live buffer directly is what covers RAM-framebuffer games. */
+static void osd_paint_pass(void *top, int bw, int pf, unsigned int now)
+{
+	int i;
+	osd_painting = 1;
+	if(top && bw > 0) osd_draw(top, bw, pf);          /* live buffer (RAM or VRAM) */
+	if(fb_bw > 0 && fb_pf >= 0)                        /* extra flip-chain buffers  */
+		for(i = 0; i < FB_MAX; i++)
+		{
+			u32 a = fb_addr[i];
+			if(a && a != fb_norm((u32)top) && (now - fb_seen[i]) <= FB_EXPIRE_US)
+				osd_draw((void *)a, fb_bw, fb_pf);
+		}
+	osd_painting = 0;
+}
+
+/* Read whichever buffer is currently on screen. k1 cleared for the driver calls. */
+static void *osd_live_buf(int *bw, int *pf)
+{
+	void *top = NULL;
+	u32 k1 = pspSdkSetK1(0);
+	if(p_getframebuf(&top, bw, pf, 0 /*PSP_DISPLAY_SETBUF_IMMEDIATE*/) < 0) top = NULL;
+	pspSdkSetK1(k1);
+	return top;
+}
+
+/* Mid-frame gap for the second paint: roughly half a 60 fps frame, so we catch a
+ * game that flips or re-renders the front buffer partway through the frame. */
+#define HALF_FRAME_US 8000
+
+/* ---- Mode 2: poll-draw into the live framebuffer(s) ------------------------
+ * Twice per frame (at vblank, then mid-frame) stamp the OSD into the live buffer
+ * and the cached VRAM flip-chain. The vblank-synced first paint plus the mid-frame
+ * second paint together beat the every-other-frame flicker on double/triple-
+ * buffered games. Draw-thread context only (k1 handling is in osd_live_buf). */
+static void osd_draw_poll(void)
+{
+	void *top;
+	int bw = 0, pf = 0;
+	unsigned int now;
+	u32 k1;
+
+	if(!p_getframebuf || osd_ticks <= 0 || osd_text[0] == 0) return;
+	if(osd_painting) return;                 /* hook is mid-paint - skip this pass */
+
+	k1 = pspSdkSetK1(0);
+	if(p_waitvblankstart) p_waitvblankstart();   /* align paint #1 to blanking */
+	pspSdkSetK1(k1);
+
+	/* Bail before touching ANY buffer if a shutdown began while we were parked in
+	 * the vblank wait - quitting a game tears the framebuffers down underneath us,
+	 * and one stray paint into freed memory is a reboot. Load-bearing for the
+	 * "OSD up when you quit" crash; re-checked again before paint #2. */
+	if(!osd_draw_run || osd_ticks <= 0) return;
+
+	top = osd_live_buf(&bw, &pf);
+	now = sceKernelGetSystemTimeLow();
+	if(top && bw > 0) fb_register((u32)top, bw, pf, now);
+	osd_paint_pass(top, bw, pf, now);             /* paint #1 (at vblank) */
+	osd_last_frame_us = now;
+	osd_draw_calls++;
+
+	/* paint #2, partway through the frame, to re-stamp a buffer the game flipped to
+	 * or re-rendered since the vblank paint. */
+	sceKernelDelayThread(HALF_FRAME_US);
+	if(!osd_draw_run || osd_ticks <= 0) return;
+	top = osd_live_buf(&bw, &pf);
+	now = sceKernelGetSystemTimeLow();
+	if(top && bw > 0) fb_register((u32)top, bw, pf, now);
+	osd_paint_pass(top, bw, pf, now);
+}
+
+/* Background draw thread. Idle (30 ms naps) until the OSD is visible, then (unless
+ * forced to hook-only) stamps the flip-chain buffers every vblank. In auto mode
+ * this runs alongside the in-hook draw - painting the whole buffer set is what
+ * stops the every-other-frame flicker on double/triple-buffered games, and it's
+ * harmless on games the hook already covers (those buffers just get the same text
+ * twice). WaitVblankStart inside osd_draw_poll paces it to ~once per frame, so it
+ * never spins the CPU. */
+static int OsdDrawThread(SceSize args, void *argp)
+{
+	(void)args; (void)argp;
+
+	while(osd_draw_run)
+	{
+		if(p_getframebuf && osd_draw_mode != 1 && osd_ticks > 0 && osd_text[0])
+			osd_draw_poll();                  /* self-paces via vblank wait */
+		else
+			sceKernelDelayThread(30000);      /* nothing to do - nap 30 ms */
+	}
+
+	/* Just return - DON'T self-delete. osd_shutdown() joins us with WaitThreadEnd
+	 * and then deletes the thread, so the PRX is never unloaded while we're alive. */
+	return 0;
+}
+
+void osd_set_draw_mode(int mode)
+{
+	osd_draw_mode = (mode >= 0 && mode <= 2) ? mode : 0;
+}
+
+void osd_shutdown(void)
+{
+	osd_draw_run = 0;        /* tells the thread (and any in-flight poll) to stop NOW */
+
+	if(osd_draw_thid >= 0)
+	{
+		/* Deterministically wait for the thread to actually leave its entry point
+		 * before we let module_stop unload us. A blind delay isn't enough: if the
+		 * thread is parked in WaitVblankStart when we unload, it wakes into freed
+		 * code = reboot. WaitThreadEnd returns as soon as it exits (a vblank is
+		 * ~16 ms away); the 1 s timeout is just a safety net. */
+		SceUInt timeout = 1000000;
+		sceKernelWaitThreadEnd(osd_draw_thid, &timeout);
+		sceKernelDeleteThread(osd_draw_thid);
+		osd_draw_thid = -1;
+	}
 }
 
 int osd_install(void)
@@ -662,5 +909,40 @@ int osd_install(void)
 
 	sceKernelDcacheWritebackAll();
 	sceKernelIcacheClearAll();
+
+	/* Resolve the poll-draw helpers. These are stock display exports; if either is
+	 * missing we simply never poll (auto mode = exactly today's behaviour, Mode 2 =
+	 * no-op). sceDisplayGetFrameBuf NID 0xEEDA2E54, WaitVblankStart NID 0x984C27E7. */
+	if(osd_draw_mode != 1)
+	{
+		u32 gfb = find_export("sceDisplay_Service", "sceDisplay", 0xEEDA2E54);
+		u32 wvb = find_export("sceDisplay_Service", "sceDisplay", 0x984C27E7);
+		if(!gfb) gfb = find_export("sceDisplay_Service", "sceDisplay_driver", 0xEEDA2E54);
+		if(!wvb) wvb = find_export("sceDisplay_Service", "sceDisplay_driver", 0x984C27E7);
+		p_getframebuf     = (int (*)(void **, int *, int *, int))gfb;
+		p_waitvblankstart = (int (*)(void))wvb;
+		log_kx("osd_install.addr_getframebuf",   gfb);
+		log_kx("osd_install.addr_waitvblank",    wvb);
+
+		if(p_getframebuf)
+		{
+			osd_draw_run  = 1;
+			osd_draw_thid = sceKernelCreateThread("BetterBright_osd", OsdDrawThread,
+			                                      0x20, 0x2000, 0, NULL);
+			if(osd_draw_thid >= 0)
+			{
+				sceKernelStartThread(osd_draw_thid, 0, NULL);
+				log_msg("osd_install: poll-draw thread started");
+			}
+			else
+			{
+				osd_draw_run = 0;
+				log_msg("osd_install: poll-draw thread FAILED to create");
+			}
+		}
+		else
+			log_msg("osd_install: GetFrameBuf not found - poll-draw disabled");
+	}
+
 	return 1;
 }
