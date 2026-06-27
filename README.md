@@ -213,7 +213,7 @@ separated.
 **Firmware-specific.** The brightness patch is found by scanning for a specific
 instruction pattern, and the dim/restore logic is built around the native
 backlight steps this firmware uses. That work was done on **6.61** - it should
-carry to other CFW, but older firmware or other PSP models. 
+carry to other CFW.
 
 ## Credits
 
