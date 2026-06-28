@@ -6,6 +6,7 @@ Based on the older *bright3* brightness plugin by hiroi01 (itself a mod
 of *bright* by plum) - https://hiroi01.com/?p=prx#bright3 - which is where the
 original idea came from.
 
+[Download BetterBright_v0.91.zip](https://github.com/hobbo91/BetterBright/releases/download/v0.91/BetterBright_v0.91.zip)
 ---
 
 ## What it does
