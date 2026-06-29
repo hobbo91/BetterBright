@@ -555,6 +555,7 @@ static int osd_scale  = 1;   /* integer multiplier 1x..4x (pixel-crisp)         
 static int osd_pos    = 1;   /* 1 = bottom, 2 = top                            */
 static int osd_fg_idx = 2;   /* text colour index (white)                      */
 static int osd_bg_idx = 1;   /* plate colour index (black)                     */
+static int osd_bg_none = 0;  /* 1 = transparent (no plate, osd_bg_colour=0)    */
 
 /* PSP-themed palette, RGB888 (the .ini colour numbering). col32/col16 convert it. */
 static const unsigned char osd_pal[][3] = {
@@ -583,6 +584,7 @@ void osd_set_style(int text_colour, int bg_colour, int size, int position)
 {
 	if(text_colour >= 1 && text_colour <= OSD_NCOLOURS) osd_fg_idx = text_colour;
 	if(bg_colour   >= 1 && bg_colour   <= OSD_NCOLOURS) osd_bg_idx = bg_colour;
+	osd_bg_none = (bg_colour == 0);   /* 0 = transparent (no plate) */
 	osd_scale = (size >= 1 && size <= 4) ? size : 1;   /* 1x..4x, else 1x */
 	osd_pos   = (position == 2) ? 2 : 1;
 }
@@ -805,14 +807,14 @@ static void osd_draw(void *topaddr, int bufferwidth, int pixelformat)
 		if(pixelformat == 3)
 		{
 			u32 fg = col32(osd_fg_idx), bg = col32(osd_bg_idx);
-			fill_plate32((u32 *)fb, bufferwidth, px - 3, py - 2, lineW + 6, imgH + 4, bg);
+			if(!osd_bg_none) fill_plate32((u32 *)fb, bufferwidth, px - 3, py - 2, lineW + 6, imgH + 4, bg);
 			blit_word32((u32 *)fb, bufferwidth, px, py, wd, fg, sc);
 			draw_line32((u32 *)fb, bufferwidth, px + imgW, ty, osd_text, tlen, fg, sc);
 		}
 		else if(pixelformat >= 0 && pixelformat <= 2)
 		{
 			u16 fg = col16(osd_fg_idx, pixelformat), bg = col16(osd_bg_idx, pixelformat);
-			fill_plate16((u16 *)fb, bufferwidth, px - 3, py - 2, lineW + 6, imgH + 4, bg);
+			if(!osd_bg_none) fill_plate16((u16 *)fb, bufferwidth, px - 3, py - 2, lineW + 6, imgH + 4, bg);
 			blit_word16((u16 *)fb, bufferwidth, px, py, wd, fg, sc);
 			draw_line16((u16 *)fb, bufferwidth, px + imgW, ty, osd_text, tlen, fg, sc);
 		}
@@ -846,7 +848,7 @@ static void osd_draw(void *topaddr, int bufferwidth, int pixelformat)
 	if(pixelformat == 3)                       /* 8888 */
 	{
 		u32 fg = col32(osd_fg_idx), bg = col32(osd_bg_idx);
-		fill_plate32((u32 *)fb, bufferwidth, plate_x - 3, plate_y - 2, maxw + 6, total_h + 4, bg);
+		if(!osd_bg_none) fill_plate32((u32 *)fb, bufferwidth, plate_x - 3, plate_y - 2, maxw + 6, total_h + 4, bg);
 		y = plate_y;
 		for(i = 0; i < nlines; i++)
 		{
@@ -858,7 +860,7 @@ static void osd_draw(void *topaddr, int bufferwidth, int pixelformat)
 	else if(pixelformat >= 0 && pixelformat <= 2)  /* 565 / 5551 / 4444 */
 	{
 		u16 fg = col16(osd_fg_idx, pixelformat), bg = col16(osd_bg_idx, pixelformat);
-		fill_plate16((u16 *)fb, bufferwidth, plate_x - 3, plate_y - 2, maxw + 6, total_h + 4, bg);
+		if(!osd_bg_none) fill_plate16((u16 *)fb, bufferwidth, plate_x - 3, plate_y - 2, maxw + 6, total_h + 4, bg);
 		y = plate_y;
 		for(i = 0; i < nlines; i++)
 		{
