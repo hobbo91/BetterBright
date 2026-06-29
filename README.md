@@ -180,7 +180,7 @@ so much of a concern as was 10+ years ago. But still, it is a thing.
 
 ## Testing
 
- - All testing has been done using a PSP-3000 09g running FasterARK.
+ - All testing has been done using a PSP-3000 and PSP-2003 running FasterARK.
  - Feedback appreciated for other models and CFW.
 
 ## Technical notes
