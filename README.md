@@ -104,8 +104,7 @@ render too. Works in XMB, games and PS1. `1` = on (default), `0` = off (the over
 code isn't installed at all).
 
 **`osd_bg_colour`** / **`osd_text_colour`** - the plate and text colours of the
-OSD. Defaults are `1` (black plate) and `2` (white text). The palette is named
-after real PSP console finishes:
+OSD. Defaults are `1` (black background) and `2` (white text). Set `osd_bg_colour=0` for no background.
 
 | value | colour | value | colour |
 |-------|--------|-------|--------|
