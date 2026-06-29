@@ -6,18 +6,18 @@ Based on the older *bright3* brightness plugin by hiroi01 (itself a mod
 of *bright* by plum) - https://hiroi01.com/?p=prx#bright3 - which is where the
 original idea came from.
 
-[Download BetterBright_v0.91.zip](https://github.com/hobbo91/BetterBright/releases/download/v0.91/BetterBright_v0.91.zip)
+[Download BetterBright_v0.92.zip](https://github.com/hobbo91/BetterBright/releases/download/v0.92/BetterBright_v0.92.zip)
 ---
 
 ## What it does
 
-* Fully customisable brightness levels, with sensible per-model defaults if you don't set your own
 * Remembers brightness state when launching games / rebooting / waking / exiting to XMB
+* Fully customisable brightness levels, with 11 sensible per-model defaults if you don't set your own
 * Configurable key combo to set brightness level up or down without cycling (the **Display** button still cycles as normal)
 * Option to display the current brightness level (OSD)
     * Shows in XMB, (most) games and PS1 - with an automatic fallback draw method so it reaches games the normal method can't
     * Customise the OSD position, size (1x-4x), background and text colours
-    * The "Brightness Level" label shows in your system language (including Japanese / Korean / Chinese / Russian)
+    * The "Brightness Level" label shows in your system language
 * Option to choose a custom "dim" level
 * Option to disable display dimming / backlight auto-off ("Power Save")
 * Option to disable console sleep ("Power Save") (use with caution)
@@ -226,7 +226,7 @@ separated.
 **Firmware-specific.** The brightness patch is found by scanning for a specific
 instruction pattern, and the dim/restore logic is built around the native
 backlight steps this firmware uses. That work was done on **6.61** - it should
-carry to other CFW.
+carry to other CFW as long as its not mega old. 
 
 ## Credits
 
