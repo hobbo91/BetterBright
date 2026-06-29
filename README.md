@@ -120,6 +120,7 @@ OSD. Defaults are `1` (black background) and `2` (white text). Set `osd_bg_colou
 | `0`   | AliExpress Clear Replacement Housing Shell (no background) |
 
 **`osd_size`** - text size: `1` = 1x (normal), `2` = 2x, `3` = 3x, `4` = 4x.
+
 **`osd_position`** - `1` = bottom (default), `2` = top.
 
 **`osd_detect_locale`** - show the OSD "Brightness Level" label in your system language
