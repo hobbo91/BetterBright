@@ -153,9 +153,8 @@ everything in `1` plus a detailed, timestamped `BetterBright.log` next to the pl
 
 - `BetterBright.prx` - the plugin
 - `BetterBright.ini` - your settings (keep it next to the .prx).
-- `BetterBright.dat` - File the plugin generates to remember your level (and the
-                       version that wrote it, so the credit shows once after an
-                       update). Delete it to reset to "nothing remembered".
+- `BetterBright.dat` - File the plugin generates to remember the brightness level
+- `BetterBright.log` - only when you set `enable_debug=2`
 
 ## Build
 
