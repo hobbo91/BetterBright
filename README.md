@@ -123,8 +123,7 @@ after real PSP console finishes:
 **`osd_position`** - `1` = bottom (default), `2` = top.
 
 **`osd_detect_locale`** - show the OSD "Brightness Level" label in your system language
-(`1`, default) or always in English (`0`). (The old name `detect_locale` is still
-accepted.)
+(`1`, default) or always in English (`0`).
 
 **`osd_draw_mode`** - how the OSD is drawn. `0` = auto (default): draw on the frame
 the game presents, and automatically fall back to drawing the live framebuffer for
