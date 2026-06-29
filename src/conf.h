@@ -21,6 +21,7 @@ typedef struct {
 	int osd_draw_mode;         /* 0=auto 1=hook-only 2=poll-only    */
 	int detect_locale;         /* 1=system language 0=English       */
 	int sync_fw_level;         /* 1=sync firmware (impose) level    */
+	int oem_brightness_levels; /* empty list: 1=4 stock L steps, 0=wide defaults */
 } BrightSettings;
 
 /* paths -> <plugin dir>/BetterBright.{ini,dat} */
@@ -33,7 +34,7 @@ int ReadItem(const char *file, Bright *buf, BrightSettings *settings);
 
 /* persistence (BetterBright.dat) */
 int SaveBrightness(const char *file, int level, int index);
-int LoadBrightness(const char *file, int *level, int *index);
+int LoadBrightness(const char *file, int *level, int *index, char *version);
 
 void *malloc_p(SceSize size);
 

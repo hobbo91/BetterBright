@@ -11,13 +11,13 @@ original idea came from.
 
 ## What it does
 
-* Fully customisable brightness levels (default list: `0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100`)
+* Fully customisable brightness levels, with sensible per-model defaults if you don't set your own
 * Remembers brightness state when launching games / rebooting / waking / exiting to XMB
 * Configurable key combo to set brightness level up or down without cycling (the **Display** button still cycles as normal)
 * Option to display the current brightness level (OSD)
     * Shows in XMB, (most) games and PS1 - with an automatic fallback draw method so it reaches games the normal method can't
     * Customise the OSD position, size (1x-4x), background and text colours
-    * The "Brightness" label shows in your system language
+    * The "Brightness Level" label shows in your system language (including Japanese / Korean / Chinese / Russian)
 * Option to choose a custom "dim" level
 * Option to disable display dimming / backlight auto-off ("Power Save")
 * Option to disable console sleep ("Power Save") (use with caution)
@@ -68,8 +68,10 @@ just use ARK-4 or FasterARK.)
   (this may vary depending on your PSP model and display).
 - Only whole numbers `0`-`100` are accepted; blank lines, `#` comments and any
   malformed line are ignored.
-- **Leave the list empty** to just cycle your model's four stock backlight steps
-  (e.g. 44/60/72/84 on a 3000) instead of custom values.
+- **Leave the list empty** to cycle a built-in default range chosen for your
+  model (PSP-1000, 2000 and 3000/Go each get their own list). Set
+  `oem_brightness_levels=1` (below) to instead cycle only the four stock backlight
+  steps.
 - Everything below the list is a plugin option:
 
 **`combo_mode`** - one optional adjust scheme (the plain Display button always
@@ -79,9 +81,11 @@ cycles regardless):
 |-------|--------|
 | `0`   | off (Display button cycling only) |
 | `1`   | hold a trigger + tap Display: **R = brighter, L = dimmer** (this is the default in the included `.ini`) |
-| `2`   | hold both triggers + D-pad: **L+R+Up = brighter, L+R+Down = dimmer** |
+| `2`   | hold both triggers + D-pad: **L+R+Up = brighter, L+R+Down = dimmer** (hold to ramp) |
 
-Both schemes stop at the dimmest/brightest end of your list (no wrap-around).
+Both schemes stop at the dimmest/brightest end of your list (no wrap-around). In
+mode `2`, holding the D-pad auto-repeats through the levels, and L/R + Display does
+nothing (the triggers are reserved for the combo).
 
 **`dim_level`** - how dim the screen goes when the PSP idles. `AUTO` (default)
 uses the second-lowest value in your list; or set a specific `0`-`100`. Only has
@@ -93,12 +97,12 @@ an effect when `keep_display_on=0`.
 (the power switch) still works. `1` = on, `0` = off (default). Use with caution -
 the console can stay awake indefinitely.
 
-**`osd_enable`** - briefly show **"Brightness: NN"** when you change it, with the word
-in your **system language**. Latin languages (English, French, German, Spanish,
-Italian, Dutch, Portuguese) use the built-in font; Japanese (明るさ), Korean (밝기),
-Chinese (亮度) and Russian (Яркость) use small embedded word images, so they render
-too (clearest at `osd_size` 2+). Works in XMB, games and PS1. `1` = on (default),
-`0` = off (the overlay code isn't installed at all).
+**`osd_enable`** - briefly show **"Brightness Level: NN"** when you change it, with the
+label in your **system language**. Latin languages (English, French, German, Spanish,
+Italian, Dutch, Portuguese) use the built-in font; Japanese (明るさレベル), Korean (밝기 레벨),
+Chinese (亮度等级) and Russian (Уровень яркости) use small embedded word images, so they
+render too. Works in XMB, games and PS1. `1` = on (default), `0` = off (the overlay
+code isn't installed at all).
 
 **`osd_bg_colour`** / **`osd_text_colour`** - the plate and text colours of the
 OSD. Defaults are `1` (black plate) and `2` (white text). The palette is named
@@ -119,8 +123,9 @@ after real PSP console finishes:
 **`osd_size`** - text size: `1` = 1x (normal), `2` = 2x, `3` = 3x, `4` = 4x.
 **`osd_position`** - `1` = bottom (default), `2` = top.
 
-**`detect_locale`** - show the OSD "Brightness" word in your system language (`1`,
-default) or always in English (`0`).
+**`osd_detect_locale`** - show the OSD "Brightness Level" label in your system language
+(`1`, default) or always in English (`0`). (The old name `detect_locale` is still
+accepted.)
 
 **`osd_draw_mode`** - how the OSD is drawn. `0` = auto (default): draw on the frame
 the game presents, and automatically fall back to drawing the live framebuffer for
@@ -133,6 +138,12 @@ the Display button normally cycles) in step with your brightness, rounded up to 
 nearest step. Your actual brightness is unchanged - it just keeps the firmware's
 internal level consistent with yours. `1` = on (default), `0` = off.
 
+**`oem_brightness_levels`** - only applies when the brightness list above is **empty**
+(ignored if you list your own values). `0` (default) cycles the built-in default
+range for your model; `1` cycles only the four stock backlight steps - the original
+`L=` levels (2000: `36/44/56/68`, 3000/Go: `44/60/72/84`, 1000: `20/40/60/80`).
+Intended for aftermarket LCD panels.
+
 **`debug_enable`** - diagnostics, for troubleshooting. `0` = off (default). `1` = an
 on-screen debug line on every brightness event (press/combo/dim/wake/idle) showing
 the firmware level, your level, the event, and how the OSD is being drawn. `2` =
@@ -142,8 +153,9 @@ everything in `1` plus a detailed, timestamped `BetterBright.log` next to the pl
 
 - `BetterBright.prx` - the plugin
 - `BetterBright.ini` - your settings (keep it next to the .prx).
-- `BetterBright.dat` - File the plugin generates to remember your level.
-                       Delete it to reset to "nothing remembered".
+- `BetterBright.dat` - File the plugin generates to remember your level (and the
+                       version that wrote it, so the credit shows once after an
+                       update). Delete it to reset to "nothing remembered".
 
 ## Build
 
@@ -187,7 +199,7 @@ seconds after a load it polls a little faster, so the brief dim-then-bright dip 
 shorter.) Keeping the state on disk - not just in RAM - is what lets it survive
 reboots and cold starts.
  
-**The OSD draws into the real frame, two ways.** Normally the "Brightness: NN"
+**The OSD draws into the real frame, two ways.** Normally the "Brightness Level: NN"
 overlay is written onto the framebuffer the system is *about* to show, via a
 hook on `sceDisplaySetFrameBuf` - no GPU race, no flicker. Some games never drive
 that hook, so for them the plugin falls back to reading the *currently displayed*

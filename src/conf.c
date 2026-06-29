@@ -5,6 +5,7 @@
 #include <pspsdk.h>
 #include <string.h>
 #include "conf.h"
+#include "version.h"
 
 /* Minimal atoi (avoids dragging newlib stdlib into a kernel PRX). */
 static int str_to_int(const char *s)
@@ -47,11 +48,14 @@ static int parse_brightness(const char *s, int *out)
 
 /* BetterBright.dat format (magic guards against a stale/foreign file). */
 #define BRIGHT_MAGIC 0x42523304   /* 'B''R''3', v4 */
+#define DAT_VERLEN   8
 typedef struct {
-	int magic;
-	int level;   /* 0-100      */
-	int index;   /* index into the BetterBright.ini list */
+	int  magic;
+	int  level;                /* 0-100      */
+	int  index;                /* index into the BetterBright.ini list */
+	char version[DAT_VERLEN];  /* plugin version that wrote this (added v0.92) */
 } BrightSave;
+#define DAT_SIZE_OLD ((int)(sizeof(int) * 3))   /* pre-version layout */
 
 void *malloc_p(SceSize size)
 {
@@ -148,10 +152,14 @@ static int parse_setting(const char *line, BrightSettings *s)
 		s->osd_position = val;
 	else if(klen == 13 && strncmp(line, "osd_draw_mode", 13) == 0)
 		s->osd_draw_mode = val;
-	else if(klen == 13 && strncmp(line, "detect_locale", 13) == 0)
+	else if(klen == 17 && strncmp(line, "osd_detect_locale", 17) == 0)
+		s->detect_locale = val;
+	else if(klen == 13 && strncmp(line, "detect_locale", 13) == 0)   /* old name, still accepted */
 		s->detect_locale = val;
 	else if(klen == 13 && strncmp(line, "sync_fw_level", 13) == 0)
 		s->sync_fw_level = val;
+	else if(klen == 21 && strncmp(line, "oem_brightness_levels", 21) == 0)
+		s->oem_brightness_levels = val;
 
 	return 1;
 }
@@ -203,6 +211,7 @@ int ReadItem(const char *file, Bright *buf, BrightSettings *settings)
 		settings->osd_draw_mode       = 0;    /* auto (hook + poll fallback) */
 		settings->detect_locale       = 1;    /* localise the OSD word */
 		settings->sync_fw_level       = 1;    /* sync firmware level to ours (default on) */
+		settings->oem_brightness_levels = 0;  /* empty list: 0=wide defaults, 1=4 stock L */
 	}
 
 	SceUID fd = sceIoOpen(file, PSP_O_RDONLY, 0777);
@@ -235,6 +244,9 @@ int SaveBrightness(const char *file, int level, int index)
 	s.magic = BRIGHT_MAGIC;
 	s.level = level;
 	s.index = index;
+	{ int i; const char *v = BB_VERSION;            /* stamp current version */
+	  for(i = 0; i < DAT_VERLEN - 1 && v[i]; i++) s.version[i] = v[i];
+	  for(; i < DAT_VERLEN; i++) s.version[i] = 0; }
 
 	k1 = pspSdkSetK1(0);
 	fd = sceIoOpen(file, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
@@ -245,8 +257,9 @@ int SaveBrightness(const char *file, int level, int index)
 	return 0;
 }
 
-/* Read the .dat: 0 + fills level/index on success, -1 otherwise. */
-int LoadBrightness(const char *file, int *level, int *index)
+/* Read the .dat: 0 + fills level/index (and version, "" for a pre-v0.92 file) on
+ * success, -1 otherwise. */
+int LoadBrightness(const char *file, int *level, int *index, char *version)
 {
 	BrightSave s;
 	int r;
@@ -261,10 +274,17 @@ int LoadBrightness(const char *file, int *level, int *index)
 	sceIoClose(fd);
 	pspSdkSetK1(k1);
 
-	if(r != (int)sizeof(s) || s.magic != BRIGHT_MAGIC) return -1;
+	if(s.magic != BRIGHT_MAGIC) return -1;
+	if(r != (int)sizeof(s) && r != DAT_SIZE_OLD) return -1;
 	if(s.level < 0 || s.level > 100) return -1;
 
 	if(level) *level = s.level;
 	if(index) *index = s.index;
+	if(version)
+	{
+		if(r == (int)sizeof(s)) { int i; s.version[DAT_VERLEN-1] = 0;
+		                          for(i = 0; i < DAT_VERLEN; i++) version[i] = s.version[i]; }
+		else version[0] = 0;     /* old layout: no version stored */
+	}
 	return 0;
 }

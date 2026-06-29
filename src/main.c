@@ -52,6 +52,7 @@ int  g_osd_enable    = 1;    /* from ini: 1 = show "Display Brightness: NN"     
 int  g_osd_draw_mode = 0;    /* from ini: 0=auto 1=hook-only 2=poll-only        */
 int  g_sys_language  = 1;    /* system language index (read at boot; default EN) */
 int  g_sync_fw_level = 0;    /* from ini: 1 = sync firmware (impose) level to ours */
+int  g_oem_levels    = 0;    /* from ini: empty list -> 1=4 stock L steps, 0=wide defaults */
 volatile int g_impose_guard   = 0;  /* 1 while WE write the impose level (re-entrancy) */
 volatile int g_impose_pending = -1; /* >=0: a USER brightness the worker should sync */
 int  g_debug_enable  = 0;    /* from ini: 0=off, 1=DEBUG OSD line, 2=OSD + log file */
@@ -92,13 +93,30 @@ int GetPatchAddr(u32 text_addr, u32 text_end, u32 *addr)
 	return -1; /* not found */
 }
 
-/* This model's 4 stock backlight steps (used when the ini list is empty). */
+/* This model's 4 stock backlight steps (for sync_fw_level). */
 static void StockLevels(int lv[4])
 {
 	int m = sceKernelGetModel();
-	if(m == 0 || m == 1) { lv[0] = 36; lv[1] = 44; lv[2] = 56; lv[3] = 68; }  /* 1000/2000 */
-	else                 { lv[0] = 44; lv[1] = 60; lv[2] = 72; lv[3] = 84; }  /* 3000/Go/...*/
+	if(m == 1)      { lv[0] = 36; lv[1] = 44; lv[2] = 56; lv[3] = 68; }  /* 2000        */
+	else if(m == 0) { lv[0] = 20; lv[1] = 40; lv[2] = 60; lv[3] = 80; }  /* 1000 (guess)*/
+	else            { lv[0] = 44; lv[1] = 60; lv[2] = 72; lv[3] = 84; }  /* 3000/Go/... */
 }
+
+/* Per-model default cycle list (used when the ini list is empty). Fills out[] and
+ * returns the count. */
+static int DefaultLevels(int *out)
+{
+	static const int l1000[] = {0,20,28,36,44,56,68,75,80,85,99};
+	static const int l2000[] = {0,28,36,44,56,68,75,80,85,90,99};
+	static const int l3000[] = {0,10,20,30,40,50,60,70,80,90,100};
+	const int *src; int n, i, m = sceKernelGetModel();
+	if(m == 0)      { src = l1000; n = 11; }
+	else if(m == 1) { src = l2000; n = 11; }
+	else            { src = l3000; n = 11; }
+	for(i = 0; i < n; i++) out[i] = src[i];
+	return n;
+}
+#define DEFAULT_MAX 11
 
 /* ---- firmware backlight level (impose) sync  [sync_fw_level] ----
  * Pins the firmware's stock-step level (impose param 0-3) to our brightness,
@@ -132,7 +150,7 @@ static void ApplyIndex(int i)
 	saved_level = bright_buf[i].level;
 	sceDisplaySetBrightness(saved_level, 0);
 	SyncImpose(saved_level);
-	if(g_osd_enable) osd_notify(saved_level);
+	if(g_osd_enable && g_debug_enable < 1) osd_notify(saved_level);  /* debug shows its own line */
 	log_kv("apply.index", cur);
 	log_kv("apply.level", saved_level);
 	g_dirty       = 1;                 /* persist (deferred, debounced) */
@@ -153,14 +171,14 @@ static void StepForwardClamp(void)
 	int n = (cur < 0) ? 0 : (cur + 1);
 	if(n > bright_count - 1) n = bright_count - 1;
 	if(n != cur) ApplyIndex(n);
-	else { SyncImpose(saved_level); if(g_osd_enable) osd_notify(saved_level); }
+	else { SyncImpose(saved_level); if(g_osd_enable && g_debug_enable < 1) osd_notify(saved_level); }
 }
 static void StepBackwardClamp(void)
 {
 	int n = (cur < 0) ? 0 : (cur - 1);
 	if(n < 0) n = 0;
 	if(n != cur) ApplyIndex(n);
-	else { SyncImpose(saved_level); if(g_osd_enable) osd_notify(saved_level); }
+	else { SyncImpose(saved_level); if(g_osd_enable && g_debug_enable < 1) osd_notify(saved_level); }
 }
 
 /* Re-apply the remembered brightness (wake/resume/load), no advance/save. */
@@ -196,8 +214,9 @@ static volatile int g_last_native = -1;
 static volatile unsigned int g_last_press_us = 0; /* time of the last genuine press  */
 static volatile int g_dimmed = 0;                 /* 1 = we've applied our own dim   */
 static volatile unsigned int g_last_wake_us = 0;  /* guards against re-dim on wake   */
+int g_native_top = 84, g_native_bot = 44;         /* model native step range (set at boot) */
 
-#define WRAP_RECENT_US 5000000u   /* 84->44 is a wrap iff within 5s of a real press
+#define WRAP_RECENT_US 5000000u   /* top->bottom is a wrap iff within 5s of a press
                                      (vs an idle-reset minutes later) */
 #define REDIM_GUARD_US 8000000u   /* don't re-dim within 8s of a wake */
 #define ANY_BTN (PSP_CTRL_SELECT|PSP_CTRL_START|PSP_CTRL_UP|PSP_CTRL_RIGHT|PSP_CTRL_DOWN| \
@@ -222,11 +241,11 @@ void sceDisplaySetBrightnessPatched(int level, int unk1)
 
 	if(g_impose_guard) return;   /* our own impose write - ignore (inert unless sync on) */
 
-	/* Up (or recent 84->44 wrap) = press; down/repeat = firmware idle/wake. */
-	if(prev < 0)                       press = 1;
-	else if(level == prev)             press = 0;
-	else if(prev == 84 && level == 44) press = ((now - g_last_press_us) < WRAP_RECENT_US);
-	else                               press = (level > prev);
+	/* Up (or recent top->bottom wrap) = press; down/repeat = firmware idle/wake. */
+	if(prev < 0)                                         press = 1;
+	else if(level == prev)                              press = 0;
+	else if(prev == g_native_top && level == g_native_bot) press = ((now - g_last_press_us) < WRAP_RECENT_US);
+	else                                                press = (level > prev);
 
 	if(press) g_last_press_us = now;
 
@@ -253,7 +272,7 @@ void sceDisplaySetBrightnessPatched(int level, int unk1)
 		return;
 	}
 
-	if(g_combo_mode == 1)
+	if(g_combo_mode == 1 || g_combo_mode == 2)
 	{
 		SceCtrlData pad;
 		u32 k1 = pspSdkSetK1(0);
@@ -263,8 +282,12 @@ void sceDisplaySetBrightnessPatched(int level, int unk1)
 		{
 			int l = (pad.Buttons & PSP_CTRL_LTRIGGER);
 			int r = (pad.Buttons & PSP_CTRL_RTRIGGER);
-			if(l && !r)      { StepBackwardClamp(); did_combo = 1; }   /* L = dimmer  */
-			else if(r && !l) { StepForwardClamp();  did_combo = 1; }   /* R = brighter */
+			if(g_combo_mode == 1)                                   /* L/R + Display adjust */
+			{
+				if(l && !r)      { StepBackwardClamp(); did_combo = 1; }   /* L = dimmer  */
+				else if(r && !l) { StepForwardClamp();  did_combo = 1; }   /* R = brighter */
+			}
+			else if(l || r) did_combo = 1;   /* combo 2: L/R + Display does nothing */
 		}
 	}
 	if(!did_combo) StepForward();
@@ -312,7 +335,7 @@ static void ServiceImpose(void)
  * dim and wake-from-sleep levels aren't visible to GetBrightness - see README. */
 int WorkerThread(SceSize args, void *argp)
 {
-	int up_prev = 0, down_prev = 0;
+	int combo_hold = 0;                        /* loops L+R+dir held (combo 2 auto-repeat) */
 	unsigned int last_loop_us = 0;
 	SceCtrlData pad;
 	int have_pad;
@@ -415,17 +438,22 @@ int WorkerThread(SceSize args, void *argp)
 			if(path != last_path) { log_ks("draw-path", path); last_path = path; }
 		}
 
-		/* (e) combo_mode 2: L+R+Up/Down, rising-edge, clamped. */
+		/* (e) combo_mode 2: L+R+Up/Down, clamped, with auto-repeat (fire on press,
+		 * then repeat after a short delay). The .dat write stays debounced, so a
+		 * ramp is one write. */
 		if(g_combo_mode == 2 && have_pad)
 		{
 			int up_now   = ((pad.Buttons & COMBO_UP)   == COMBO_UP);
 			int down_now = ((pad.Buttons & COMBO_DOWN) == COMBO_DOWN);
-
-			if(up_now   && !up_prev)   StepForwardClamp();  /* brighter */
-			if(down_now && !down_prev) StepBackwardClamp(); /* dimmer  */
-
-			up_prev   = up_now;
-			down_prev = down_now;
+			if(up_now || down_now)
+			{
+				if(combo_hold == 0 || (combo_hold >= 4 && (combo_hold & 1) == 0))
+				{
+					if(up_now) StepForwardClamp(); else StepBackwardClamp();
+				}
+				combo_hold++;
+			}
+			else combo_hold = 0;
 		}
 
 		/* (f) flush the log ring to disk (only safe place for the file I/O). */
@@ -479,6 +507,8 @@ int module_start(SceSize args, void *argp)
 	u32 patch_addr;
 	char path[256];
 	int saved_index = 0;
+	char dat_ver[8] = {0};
+	int version_changed = 0;     /* .dat exists but was written by an older version */
 	SceModule2 *mod;
 
 	/* Derive the .dat path before path[] gets reused for the .ini. */
@@ -498,10 +528,10 @@ int module_start(SceSize args, void *argp)
 	strcpy(path, (char *)argp);
 	GetConfigPath(path);
 
-	/* Count valid values; <=0 (none/empty) falls back to 4 stock steps, so reserve 4. */
+	/* Count valid values; <=0 (none/empty) falls back to the model default list. */
 	bright_count = CountItem(path);
 	{
-		int want = (bright_count > 0) ? bright_count : 4;
+		int want = (bright_count > 0) ? bright_count : DEFAULT_MAX;
 		bright_buf = (Bright *)memoryAllocEx("ms_malloc", MEMORY_KERN_HI, 0,
 		                                     sizeof(Bright) * want, PSP_SMEM_Low, NULL);
 	}
@@ -517,6 +547,7 @@ int module_start(SceSize args, void *argp)
 		g_osd_enable       = settings.osd_enable;
 		g_debug_enable     = settings.debug_enable;
 		g_sync_fw_level    = settings.sync_fw_level;
+		g_oem_levels       = settings.oem_brightness_levels;
 		osd_set_style(settings.osd_text_colour, settings.osd_bg_colour,
 		              settings.osd_size, settings.osd_position);
 		osd_set_draw_mode(settings.osd_draw_mode);
@@ -535,14 +566,24 @@ int module_start(SceSize args, void *argp)
 
 		if(n > 0)
 			bright_count = n;
-		else
+		else if(g_oem_levels)
 		{
-			/* empty ini list -> cycle the 4 stock steps */
+			/* empty ini list + oem flag -> just the 4 stock backlight steps */
 			int lv[4], i;
 			StockLevels(lv);
 			for(i = 0; i < 4; i++) bright_buf[i].level = lv[i];
 			bright_count = 4;
 		}
+		else
+		{
+			/* empty ini list -> model default cycle list */
+			int lv[DEFAULT_MAX], i, c = DefaultLevels(lv);
+			for(i = 0; i < c; i++) bright_buf[i].level = lv[i];
+			bright_count = c;
+		}
+
+		/* cache the model native step range for the wrap test */
+		{ int s[4]; StockLevels(s); g_native_bot = s[0]; g_native_top = s[3]; }
 	}
 
 	/* Logging (file only at debug_enable=2). */
@@ -565,15 +606,26 @@ int module_start(SceSize args, void *argp)
 		log_kv("model",                         sceKernelGetModel());
 		log_kv("system.language",               g_sys_language);
 		log_kv("settings.sync_fw_level",        g_sync_fw_level);
+		log_kv("settings.oem_brightness_levels", g_oem_levels);
 	}
 
 	/* Restore remembered brightness (if any) and resume the cycle just after it. */
-	if(LoadBrightness(data_path, &saved_level, &saved_index) == 0)
+	if(LoadBrightness(data_path, &saved_level, &saved_index, dat_ver) == 0)
 	{
 		if(saved_index < 0 || saved_index >= bright_count) saved_index = 0;
 		cur = saved_index;
 		g_disk_level = saved_level;   /* what we just read is what's on disk */
 		g_disk_index = cur;
+
+		/* version bump while a .dat already exists -> re-show the credit + restamp */
+		{ const char *v = BB_VERSION; int i = 0;
+		  while(v[i] && dat_ver[i] && v[i] == dat_ver[i]) i++;
+		  if(v[i] != dat_ver[i]) version_changed = 1; }
+		if(version_changed)
+		{
+			SaveBrightness(data_path, saved_level, cur);   /* stamp new version */
+			log_kv("version_changed", 1);
+		}
 	}
 	log_kv("load.saved_level", saved_level);
 	log_kv("load.saved_index", saved_index);
@@ -630,8 +682,8 @@ int module_start(SceSize args, void *argp)
 	else
 		log_msg("osd: disabled");
 
-	/* First-run credit, shown once for ~4s. */
-	if(g_first_run && g_osd_enable)
+	/* Credit, shown once for ~4s: on first run, or after a version upgrade. */
+	if((g_first_run || version_changed) && g_osd_enable)
 		osd_message("BetterBright " BB_VERSION " by hobbo91");
 
 	log_msg("module_start: done, worker starting");
