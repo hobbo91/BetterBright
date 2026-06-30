@@ -38,16 +38,17 @@
 ## How to use
 
 * Press the PSP's **Display (brightness) button** as normal to cycle through the brightness
-values you list in `BetterBright.ini`.
+values. 
 
 * With the included `.ini` (`combo_mode=1`) you can hold L **or** R Trigger then tap the
 Display button: **R = brighter, L = dimmer**.
 
-* You can also use **L + R** then **Up** / **Down** when you set `combo_mode=2`
+* You can also use **L + R** then **Up** / **Down** (D-Pad) when you set `combo_mode=2`
+
+* You can change the position, colour, size and language of the OSD by editing `BetterBright.ini`.
 
 It remembers the level you chose and re-applies it after returning to the XMB, launching 
-a game, rebooting, or (usually) waking from sleep. You can also change the position, colour,
-size and language of the OSD by editing `BetterBright.ini`.
+a game, rebooting, or (usually) waking from sleep. 
 
 ## Install (ARK-4 / FasterARK)
 
