@@ -10,7 +10,7 @@
 * **Remembers brightness state** when launching games / rebooting / waking / exiting to XMB
 * **Fully customisable brightness levels**, with 11 sensible per-model defaults if you don't set your own
 * **Configurable key combo** to set brightness level up or down without cycling (the **Display** button still cycles as normal)
-* **Option to show the current brightness level** on screen (OSD)
+* **Show the current brightness level** on screen (OSD)
     * Shows in XMB, (most) games, PS1 and homebrew 
     * Customise the OSD position, size (1x-4x), background and text colours
     * The "Brightness Level" label shows in your system language
