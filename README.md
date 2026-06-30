@@ -81,8 +81,7 @@ Example - leave empty to use the defaults. IPS or after market screens will need
 
 
 
-**`combo_mode`** - one optional adjust scheme (the plain Display button always
-cycles regardless):
+**`combo_mode`** - Adjust scheme (the plain Display button always cycles regardless):
 
 | value | scheme |
 |-------|--------|
@@ -91,8 +90,7 @@ cycles regardless):
 | `2`   | hold both triggers + tap D-pad: **Up = brighter, Down = dimmer** (hold to ramp) |
 
 Both schemes stop at the dimmest/brightest end of your list (no wrap-around). In
-mode `2`, holding the D-pad auto-repeats through the levels, and L/R + Display does
-nothing (the triggers are reserved for the combo).
+mode `2`, holding the D-pad auto-repeats/ramps through the levels. 
 
 **`dim_level`** - how dim the screen goes when the PSP idles. `AUTO` (default)
 uses the second-lowest value in your list; or set a specific `0`-`100`. Only has
