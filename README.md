@@ -44,9 +44,9 @@ Display button: **R = brighter, L = dimmer**.
 
 * You can also use **L + R** then **Up** / **Down** when you set `combo_mode=2`
 
-It remembers the level you chose and re-applies it after returning to the XMB,
-launching a game, rebooting, or (usually) waking from sleep - instead of snapping 
-back to the firmware default.
+It remembers the level you chose and re-applies it after returning to the XMB, launching 
+a game, rebooting, or (usually) waking from sleep. You can also change the position, colour,
+size and language of the OSD by editing `BetterBright.ini`.
 
 ## Install (ARK-4 / FasterARK)
 
