@@ -126,25 +126,24 @@ OSD. Defaults are `1` (black background) and `2` (white text). Set `osd_bg_colou
 
 **`osd_draw_mode`** - how the OSD is drawn. `0` = auto (default): draw on the frame
 the game presents, and automatically fall back to drawing the live framebuffer for
-games that don't drive that path. `1` = hook only (original method, no fallback).
-`2` = poll only (always draw the live framebuffer). Auto covers virtually every
-game/app; the other two are escape hatches if a title misbehaves.
+games that don't drive that path. `1` = API hook only `2` = poll only (always draw the 
+live framebuffer). Auto (default) covers virtually every game/app.
 
 **`sync_fw_level`** - keep the firmware's own backlight level (the four stock steps
 the Display button normally cycles) in step with your brightness, rounded up to the
 nearest step. Your actual brightness is unchanged - it just keeps the firmware's
-internal level consistent with yours. `1` = on (default), `0` = off.
+internal level more consistent with yours. `1` = on (default), `0` = off.
 
 **`oem_brightness_levels`** - only applies when the brightness list above is **empty**
 (ignored if you list your own values). `0` (default) cycles the built-in default
 range for your model; `1` cycles only the four stock backlight steps - the original
 `L=` levels (2000: `36/44/56/68`, 3000/Go: `44/60/72/84`, 1000: `20/40/60/80`).
-Intended for aftermarket LCD panels.
+**Intended for aftermarket LCD panels.**
 
 **`debug_enable`** - diagnostics, for troubleshooting. `0` = off (default). `1` = an
 on-screen debug line on every brightness event (press/combo/dim/wake/idle) showing
 the firmware level, your level, the event, and how the OSD is being drawn. `2` =
-everything in `1` plus a detailed, timestamped `BetterBright.log` next to the plugin.
+everything in `1` plus a verbose `BetterBright.log` next to the plugin.
 
 ## Files
 
@@ -172,7 +171,7 @@ so much of a concern as was 10+ years ago. But still, it is a thing, especially 
 ## Known issues
 
 - **The OSD reaches the vast majority of games now**, but there are still some
-  exceptions, e.g. LEGO Batman. 
+  exceptions, e.g. LEGO Batman (in-game). 
 - Setting a backlight higher than the firmware max (e.g. 99) will restore to the
   fw max (e.g. 84) when waking from sleep.
 - If something external changes the backlight in a way the plugin doesn't catch,
