@@ -43,13 +43,13 @@ original idea came from.
 Press the PSP's **Display (brightness) button** to cycle through the brightness
 values you list in `BetterBright.ini`.
 
-With the included `.ini` (`combo_mode=1`) you can also hold a trigger + tap the
+With the included `.ini` (`combo_mode=1`) you can also hold L or R Trigger + tap the
 Display button: **R = brighter, L = dimmer**. See `combo_mode` below for the
 other schemes.
 
 It remembers the level you chose and re-applies it after returning to the XMB,
-launching a game, rebooting, or waking from sleep - instead of snapping back to
-the firmware default.
+launching a game, rebooting, or (usually) waking from sleep - instead of snapping 
+back to the firmware default.
 
 ## Install (ARK-4 / FasterARK)
 
@@ -64,14 +64,11 @@ just use ARK-4 or FasterARK.)
 
 ## Configuration (`BetterBright.ini`)
 
-- One brightness value per line, `0`-`100`. `0` = backlight off, `100` = full (`99` is the max for PSP-1000/2000 with OEM display, this may vary further for after market screens)
-- Only whole numbers `0`-`100` are accepted; blank lines, `#` comments and any
-  malformed line are ignored.
-- **Leave the list empty** to cycle a built-in default range chosen for your
-  model (PSP-1000, 2000 and 3000/Go each get their own list). Set
-  `oem_brightness_levels=1` (below) to instead cycle only the four stock backlight
-  steps.
-- Everything below the list is a plugin option:
+- One brightness value per line, `0`-`100`. `0` = backlight off, `100` = full (`99` is the max for PSP-1000/2000 with OEM display,   this may vary further for after market screens)
+- Only one whole number per line `0`-`100` are accepted; blank lines, `#` comments and any malformed line are ignored.
+- **Leave the list empty** to cycle a built-in default range chosen for your model (PSP-1000, 2000 and 3000/Go,
+  each get their own list).
+  Set `oem_brightness_levels=1` (below) to instead cycle only the four stock backlight steps.
 
 **`combo_mode`** - one optional adjust scheme (the plain Display button always
 cycles regardless):
