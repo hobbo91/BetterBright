@@ -40,10 +40,9 @@
 * Press the PSP's **Display (brightness) button** as normal to cycle through the brightness
 values. 
 
-* With the included `.ini` (`combo_mode=1`) you can hold L **or** R Trigger then tap the
-Display button: **R = brighter, L = dimmer**.
+* Hold L **or** R Trigger then tap the Display button: **R = brighter, L = dimmer**.
 
-* You can also use **L + R** then **Up** / **Down** (D-Pad) when you set `combo_mode=2`
+* You can also use **L + R** then **Up** / **Down** (D-Pad) when you set `combo_mode=2` in `BetterBright.ini`.
 
 * You can change the position, colour, size and language of the OSD by editing `BetterBright.ini`.
 
