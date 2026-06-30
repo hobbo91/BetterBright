@@ -39,10 +39,10 @@
 Press the PSP's **Display (brightness) button** as normal to cycle through the brightness
 values you list in `BetterBright.ini`.
 
-With the included `.ini` (`combo_mode=1`) you can also hold L or R Trigger + tap the
-Display button: **R = brighter, L = dimmer**. See `combo_mode` below other schemes.
+With the included `.ini` (`combo_mode=1`) you can hold L **or** R Trigger then tap the
+Display button: **R = brighter, L = dimmer**.
 
-You can also use **L + R + Up** / **Down** when you set `combo_mode=2`
+You can also use **L + R** then **Up** / **Down** when you set `combo_mode=2`
 
 It remembers the level you chose and re-applies it after returning to the XMB,
 launching a game, rebooting, or (usually) waking from sleep - instead of snapping 
