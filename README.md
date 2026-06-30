@@ -149,8 +149,9 @@ everything in `1` plus a detailed, timestamped `BetterBright.log` next to the pl
 
 - `BetterBright.prx` - the plugin
 - `BetterBright.ini` - your settings (keep it next to the .prx).
-- `BetterBright.dat` - File the plugin generates to remember the brightness level
 - `BetterBright.log` - only when you set `enable_debug=2`
+- `BetterBright.dat` - File the plugin generates to remember the brightness level
+
 
 ## Build
 
@@ -165,7 +166,7 @@ this to preserve battery life and "potentially" long-term damage.
 **100% brightness will drain the battery faster!**
 
 In an age of quality 1800/2500mAh batteries, and nobody using UMD any more, battery drain isn't
-so much of a concern as was 10+ years ago. But still, it is a thing. 
+so much of a concern as was 10+ years ago. But still, it is a thing especially when overclocked.
 
 ## Known issues
 
@@ -189,9 +190,9 @@ A few design decisions, in case they're useful to anyone poking at the source:
 `BetterBright.dat` and held by a low-frequency worker thread that re-asserts it
 when needed (boot, game launch, return to XMB, resume from sleep). The firmware
 sets its *own* brightness during those transitions, so rather than fighting it in
-real time the plugin waits a beat and puts your level back. (During the first few
-seconds after a load it polls a little faster, so the brief dim-then-bright dip is
-shorter.) Keeping the state on disk - not just in RAM - is what lets it survive
+real time the plugin waits a beat and puts your level back. 
+
+Keeping the state on disk - not just in RAM - is what lets it survive
 reboots and cold starts.
  
 **The OSD draws into the real frame, two ways.** Normally the "Brightness Level: NN"
@@ -221,7 +222,7 @@ separated.
 **Firmware-specific.** The brightness patch is found by scanning for a specific
 instruction pattern, and the dim/restore logic is built around the native
 backlight steps this firmware uses. That work was done on **6.61** - it should
-carry to other CFW as long as its not mega old. 
+carry to other CFW as long as it's not mega old. 
 
 ## Credits
 
