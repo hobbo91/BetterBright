@@ -172,10 +172,10 @@ so much of a concern as was 10+ years ago. But still, it is a thing.
 
 ## Known issues
 
-- **The OSD reaches the vast majority of games now**, including ones the original
-  method couldn't (GTA: LCS, Silent Hill.etc). If a specific title still hides or
-  flickers the overlay, try `osd_draw_mode=1`. Brightness control itself should
-  work regardless.
+- **The OSD reaches the vast majority of games now**, but there are still some
+  exceptions, e.g. LEGO Batman. 
+- Setting a backlight higher than the firmware max (e.g. 99) will restore to the
+  fw max (e.g. 84) when waking from sleep.
 - If something external changes the backlight in a way the plugin doesn't catch,
   just press the Display button (or your combo) to re-apply your level.
 
