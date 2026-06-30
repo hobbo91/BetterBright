@@ -175,8 +175,10 @@ so much of a concern as was 10+ years ago. But still, it is a thing, especially 
 
 ## Testing
 
- - All testing has been done using a PSP-3000 and PSP-2003 running FasterARK.
- - Feedback appreciated for other models and CFW.
+ - All testing has been done using a PSP-3000 and PSP-2003 with OEM display running FasterARK.
+ - Set `debug_mode=2` and attach `BetterBright.log` if you wish top open an issue.
+ - Feedback appreciated for other models, displays and CFW.
+
 
 ## Technical notes
  
