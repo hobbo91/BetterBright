@@ -67,6 +67,19 @@ just use ARK-4 or FasterARK, it's way better.)
   each get their own list).
   Set `oem_brightness_levels=1` (below) to instead cycle only the four stock backlight steps.
 
+Example:
+```
+# --- BEGIN: List each custom brightness level on each below -------------------
+0
+28
+40
+50
+70
+90
+99
+# ------------------------------------------------------------------------------
+```
+
 **`combo_mode`** - one optional adjust scheme (the plain Display button always
 cycles regardless):
 
