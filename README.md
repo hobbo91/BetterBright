@@ -151,7 +151,7 @@ range for your model; `1` cycles only the four stock backlight steps - the origi
 
 **`debug_enable`** - diagnostics, for troubleshooting. `0` = off (default). `1` = an
 on-screen debug line on every brightness event (press/combo/dim/wake/idle) showing
-the firmware level, your level, the event, and how the OSD is being drawn. `2` =
+the `sceDisplayGetBrightness level`, user level, the event, and how the OSD is being drawn. `2` =
 everything in `1` plus a verbose `BetterBright.log` next to the plugin.
 
 ## Files
