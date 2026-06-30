@@ -100,7 +100,7 @@ an effect when `keep_display_on=0`.
 
 **`disable_sleep`** - stop the PSP from auto-sleeping on its own. Manual sleep
 (the power switch) still works. `1` = on, `0` = off (default). Use with caution -
-the console can stay awake indefinitely.
+the console will never automatically sleep when enabled ☕.
 
 **`osd_enable`** - briefly show **"Brightness Level: NN"** when you change it, with the
 label in your **system language**. Latin languages (English, French, German, Spanish,
