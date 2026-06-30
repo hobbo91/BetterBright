@@ -42,7 +42,7 @@ values you list in `BetterBright.ini`.
 With the included `.ini` (`combo_mode=1`) you can also hold L or R Trigger + tap the
 Display button: **R = brighter, L = dimmer**. See `combo_mode` below other schemes.
 
-e.g. L+R + Up or Down when you set `combo_mode=2`
+You can also use **L+R + Up** or **Down** when you set `combo_mode=2`
 
 It remembers the level you chose and re-applies it after returning to the XMB,
 launching a game, rebooting, or (usually) waking from sleep - instead of snapping 
