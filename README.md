@@ -62,6 +62,7 @@ just use ARK-4 or FasterARK, it's way better.)
 ## Configuration (`BetterBright.ini`)
 
 - One brightness value per line, `0`-`100`. `0` = backlight off, `100` = full (`99` is the max for PSP-1000/2000 with OEM display,   this may vary further for after market screens)
+
 Example:
 ```
 # --- BEGIN: List each custom brightness level on each below ---
