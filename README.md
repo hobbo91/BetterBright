@@ -61,7 +61,7 @@ just use ARK-4 or FasterARK, it's way better.)
 
 ## Configuration (`BetterBright.ini`)
 
-Example:
+Example - leave empty to use the defaults. Non-OEM/IPS screens will need to play around with this:
 ```
 # --- BEGIN: List each custom brightness level on each below ---
 28
