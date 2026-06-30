@@ -17,7 +17,8 @@
 * Option to **choose a custom "dim" level**
 * Option to **disable display dimming / backlight auto-off** ("Power Save")
 * Option to **disable auto-sleep** ("Power Save") (use with caution)
-* Developed and tested on 6.61 / FasterARK and ARK-4, should work fine with 6.60 - older firmwares untested. Just upgrade man, it's 2026, you'll be fine). 
+* Developed and tested on 6.61 / FasterARK and ARK-4, should work fine with 6.60
+* Older firmwares untested. Just upgrade to 6.60/6.61, it's 2026, you'll be fine. 
   
 <table>
   <tr>
