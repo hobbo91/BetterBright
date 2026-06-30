@@ -46,7 +46,7 @@ values you list in `BetterBright.ini`.
 With the included `.ini` (`combo_mode=1`) you can also hold L or R Trigger + tap the
 Display button: **R = brighter, L = dimmer**. See `combo_mode` below other schemes.
 
-e.g. L+R + Up or Down
+e.g. L+R + Up or Down when you set `combo_mode=2`
 
 It remembers the level you chose and re-applies it after returning to the XMB,
 launching a game, rebooting, or (usually) waking from sleep - instead of snapping 
@@ -61,7 +61,7 @@ https://github.com/PSP-Archive/ARK-4/wiki/Plugins
 
 (The included `vsh.txt` / `game.txt` / `pops.txt` in the `legacy` folder are only
 for loaders that still use seplugins-style text files. Do yourself a favour and
-just use ARK-4 or FasterARK.)
+just use ARK-4 or FasterARK, it's way better.)
 
 ## Configuration (`BetterBright.ini`)
 
@@ -128,7 +128,7 @@ OSD. Defaults are `1` (black background) and `2` (white text). Set `osd_bg_colou
 the game presents, and automatically fall back to drawing the live framebuffer for
 games that don't drive that path. `1` = hook only (original method, no fallback).
 `2` = poll only (always draw the live framebuffer). Auto covers virtually every
-game; the other two are escape hatches if a title misbehaves.
+game/app; the other two are escape hatches if a title misbehaves.
 
 **`sync_fw_level`** - keep the firmware's own backlight level (the four stock steps
 the Display button normally cycles) in step with your brightness, rounded up to the
@@ -151,7 +151,7 @@ everything in `1` plus a detailed, timestamped `BetterBright.log` next to the pl
 - `BetterBright.prx` - the plugin
 - `BetterBright.ini` - your settings (keep it next to the .prx).
 - `BetterBright.log` - only when you set `enable_debug=2`
-- `BetterBright.dat` - File the plugin generates to remember the brightness level
+- `BetterBright.dat` - small file the plugin generates to remember the brightness level
 
 
 ## Build
@@ -164,10 +164,10 @@ everything else is the base PSP SDK.
 Whilst the original display is designed to go to its max brightness, the PSP restricts
 this to preserve battery life and "potentially" long-term damage.
 
-**100% brightness will drain the battery faster!**
+**Max brightness will drain the battery faster!**
 
 In an age of quality 1800/2500mAh batteries, and nobody using UMD any more, battery drain isn't
-so much of a concern as was 10+ years ago. But still, it is a thing especially when overclocked.
+so much of a concern as was 10+ years ago. But still, it is a thing, especially when overclocked.
 
 ## Known issues
 
