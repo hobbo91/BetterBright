@@ -2,7 +2,7 @@
 
 **Brightness control plugin for the PSP**. 
 
-Loosely based on the older [bright3](https://hiroi01.com/?p=prx#bright3) by [@hiroi01](https://github.com/hiroi01) (itself a mod of *bright* by plum) — which is where the original idea came from.
+_Loosely based on the older [bright3](https://hiroi01.com/?p=prx#bright3) by [@hiroi01](https://github.com/hiroi01) (itself a mod of *bright* by plum) — which is where the original idea came from._
 
 [Download BetterBright_v0.92.zip](https://github.com/hobbo91/BetterBright/releases/download/v0.92/BetterBright_v0.92.zip)
 ---
