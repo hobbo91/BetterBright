@@ -87,7 +87,7 @@ cycles regardless):
 |-------|--------|
 | `0`   | off (Display button cycling only) |
 | `1`   | hold a trigger + tap Display: **R = brighter, L = dimmer** (this is the default in the included `.ini`) |
-| `2`   | hold both triggers + D-pad: **L+R+Up = brighter, L+R+Down = dimmer** (hold to ramp) |
+| `2`   | hold both triggers + tap D-pad: **L+R+Up = brighter, L+R+Down = dimmer** (hold to ramp) |
 
 Both schemes stop at the dimmest/brightest end of your list (no wrap-around). In
 mode `2`, holding the D-pad auto-repeats through the levels, and L/R + Display does
