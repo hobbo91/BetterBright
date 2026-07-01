@@ -251,10 +251,13 @@ static SceUID osd_draw_thid = -1;
  * live in-hook paint instead, never cached. */
 #define FB_MAX 4
 #define FB_EXPIRE_US 200000u            /* drop an address not re-seen for 200 ms */
+#define FB_SETTLE_US 1200000u           /* pause poll-draw ~1.2s after a mode change
+                                           (game<->XMB) - the buffers are torn down then */
 static volatile u32 fb_addr[FB_MAX];
 static volatile unsigned int fb_seen[FB_MAX];
 static volatile int fb_bw = 0;
 static volatile int fb_pf = -1;
+static volatile unsigned int fb_transition_us = 0;   /* last geometry change (mode switch) */
 
 /* strip the 0x40000000 uncached bit so cached/uncached dedupe to one entry */
 static u32 fb_norm(u32 a) { return a & 0x0FFFFFFFu; }
@@ -277,6 +280,7 @@ static void fb_register(u32 top, int bw, int pf, unsigned int now)
 	{
 		for(i = 0; i < FB_MAX; i++) { fb_addr[i] = 0; fb_seen[i] = 0; }
 		fb_bw = bw; fb_pf = pf;
+		fb_transition_us = now;             /* mode switch -> pause poll-draw to settle */
 	}
 	for(i = 0; i < FB_MAX; i++)              /* known -> refresh timestamp */
 		if(fb_addr[i] == top) { fb_seen[i] = now; return; }
@@ -653,7 +657,9 @@ static void fill_plate32(u32 *fb, int stride, int x, int y, int w, int h, u32 bg
  * previous letter; a leading ':' (after a word image) is left alone. */
 static int char_advance(const char *text, int i, int sc)
 {
-	return (text[i] == ':' && i > 0) ? (ADVANCE - COLON_KERN) * sc : ADVANCE * sc;
+	if(text[i] == ':' && i > 0)                    return (ADVANCE - COLON_KERN) * sc;
+	if(text[i] == ' ' && i > 0 && text[i-1] == ':') return (ADVANCE - 1) * sc;  /* ": N" a hair tighter */
+	return ADVANCE * sc;
 }
 static int char_kern(const char *text, int i, int sc)
 {
@@ -972,7 +978,13 @@ static int OsdDrawThread(SceSize args, void *argp)
 	while(osd_draw_run)
 	{
 		if(p_getframebuf && osd_draw_mode != 1 && osd_ticks > 0 && osd_text[0])
-			osd_draw_poll();
+		{
+			unsigned int now = sceKernelGetSystemTimeLow();
+			if((now - fb_transition_us) < FB_SETTLE_US)
+				sceKernelDelayThread(30000);  /* mode switch (game<->XMB) - let it settle */
+			else
+				osd_draw_poll();
+		}
 		else
 			sceKernelDelayThread(30000);      /* nap */
 	}

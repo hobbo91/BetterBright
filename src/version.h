@@ -2,6 +2,6 @@
 #define VERSION_H__
 
 /* plugin version string (shared by main.c and osd.c) */
-#define BB_VERSION "0.92"
+#define BB_VERSION "0.93"
 
 #endif

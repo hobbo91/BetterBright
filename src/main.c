@@ -219,6 +219,8 @@ int g_native_top = 84, g_native_bot = 44;         /* model native step range (se
 #define WRAP_RECENT_US 5000000u   /* top->bottom is a wrap iff within 5s of a press
                                      (vs an idle-reset minutes later) */
 #define REDIM_GUARD_US 8000000u   /* don't re-dim within 8s of a wake */
+#define WAKE_GUARD_US   700000u   /* a "press" within 0.7s of a wake is the firmware's
+                                     wake bump, not a real press - restore, don't cycle */
 #define ANY_BTN (PSP_CTRL_SELECT|PSP_CTRL_START|PSP_CTRL_UP|PSP_CTRL_RIGHT|PSP_CTRL_DOWN| \
                  PSP_CTRL_LEFT|PSP_CTRL_LTRIGGER|PSP_CTRL_RTRIGGER|PSP_CTRL_TRIANGLE| \
                  PSP_CTRL_CIRCLE|PSP_CTRL_CROSS|PSP_CTRL_SQUARE)
@@ -269,6 +271,15 @@ void sceDisplaySetBrightnessPatched(int level, int unk1)
 		g_last_wake_us = now;
 		ApplySaved();
 		DbgEvent("wake", level);
+		return;
+	}
+
+	/* Just woke (worker may have cleared g_dimmed first): the firmware's own wake bump
+	 * arrives here as a "press". Restore, don't cycle - else at max we'd wrap to lowest. */
+	if((now - g_last_wake_us) < WAKE_GUARD_US)
+	{
+		ApplySaved();
+		DbgEvent("wake2", level);
 		return;
 	}
 
