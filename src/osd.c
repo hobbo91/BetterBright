@@ -658,7 +658,7 @@ static void fill_plate32(u32 *fb, int stride, int x, int y, int w, int h, u32 bg
 static int char_advance(const char *text, int i, int sc)
 {
 	if(text[i] == ':' && i > 0)                    return (ADVANCE - COLON_KERN) * sc;
-	if(text[i] == ' ' && i > 0 && text[i-1] == ':') return (ADVANCE - 1) * sc;  /* ": N" a hair tighter */
+	if(text[i] == ' ' && i > 0 && text[i-1] == ':') return (ADVANCE - 2) * sc;  /* ": N" tighter */
 	return ADVANCE * sc;
 }
 static int char_kern(const char *text, int i, int sc)
